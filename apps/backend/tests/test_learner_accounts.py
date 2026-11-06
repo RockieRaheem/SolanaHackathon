@@ -29,7 +29,7 @@ from harambeeone_api.models import (
     Requirement,
     School,
     SchoolMembership,
-    StellarAnchor,
+    SettlementAnchor,
     Student,
     StudentFeeAssignment,
     StudentRequirement,
@@ -310,12 +310,12 @@ def account_workspace():
                 PaymentAllocation(
                     payment_id=second_payment.id, student_id=student.id, amount=Decimal("100")
                 ),
-                StellarAnchor(
+                SettlementAnchor(
                     payment_id=first_payment.id,
                     commitment_hash="1" * 64,
                     status="pending",
                 ),
-                StellarAnchor(
+                SettlementAnchor(
                     payment_id=second_payment.id,
                     commitment_hash="2" * 64,
                     status="pending",

@@ -1,4 +1,123 @@
-import { ArrowRightLeft, CircleCheck, Clock3, Landmark, RefreshCw, ShieldCheck } from 'lucide-react';
-import { MetricCard, PageHeader, SectionHeader, Status } from '@/components/ui';
-const settlements=[['STL-2026-0814','Girls in STEM 2028','UGX 600,000','USDC 162.42','OFFRAMP_PROCESSING','warning'],['STL-2026-0813','Bridge to Senior Four','UGX 1,200,000','USDC 324.83','FIAT_SETTLED','info'],['STL-2026-0812','Girls in STEM 2028','UGX 600,000','USDC 162.11','RECONCILED','success']];
-export default function Settlement(){return <><PageHeader eyebrow="HarambeeOne Protocol · Testnet demonstration" title="Programme settlement" description="Trace programme value from authorised allocation to confirmed UGX school payout." actions={<><button className="btn"><RefreshCw size={16}/>Refresh provider state</button><button className="btn primary"><Landmark size={16}/>Settlement register</button></>}/><section className="metric-grid"><MetricCard icon={ArrowRightLeft} label="In settlement" value="UGX 18.4M" note="31 beneficiary allocations" tone="blue"/><MetricCard icon={CircleCheck} label="Fiat settled today" value="UGX 7.8M" note="Confirmed by school payout provider" tone="green"/><MetricCard icon={Clock3} label="Off-ramp processing" value="8 payouts" note="Within provider service window" tone="amber"/><MetricCard icon={ShieldCheck} label="Reconciliation exceptions" value="2 items" note="No learner balances changed" tone="red"/></section><section className="panel" style={{marginBottom:18}}><SectionHeader title="End-to-end settlement state" subtitle="The learner ledger updates only at the final reconciliation control"/><div className="flow-line">{[['1','Allocated','Programme'],['2','Authorised','Approvals'],['3','On-chain sent','Stellar'],['4','Off-ramp','Processing'],['5','Fiat settled','School'],['6','Reconciled','Ledger']].map((s,i)=><div style={{display:'contents'}} key={s[0]}><div className={`flow-step ${i<3?'done':i===3?'active':''}`}><span>{s[0]}</span><strong>{s[1]}</strong><small>{s[2]}</small></div>{i<5&&<i className="flow-rule"/>}</div>)}</div></section><div className="content-grid"><section className="panel"><SectionHeader title="Settlement register" subtitle="Treasury, FX and final-delivery evidence retained together" action="Export audit"/><div className="table-wrap"><table className="data-table"><thead><tr><th>Settlement ID</th><th>Programme</th><th>School obligation</th><th>Treasury movement</th><th>State</th></tr></thead><tbody>{settlements.map(s=><tr key={s[0]}><td>{s[0]}</td><td className="entity"><strong>{s[1]}</strong><small>Approved institution · Kampala</small></td><td className="amount">{s[2]}</td><td>{s[3]}</td><td><Status tone={s[5]}>{s[4]}</Status></td></tr>)}</tbody></table></div></section><aside className="stack"><section className="panel"><SectionHeader title="Production gate" subtitle="Uganda corridor validation"/><div className="policy-box"><h3>Controlled test environment</h3><div className="policy-row"><span>Stellar network</span><strong>Testnet</strong></div><div className="policy-row"><span>Contract controls</span><strong>Prototype</strong></div><div className="policy-row"><span>USDC → UGX partner</span><strong>Not validated</strong></div><div className="policy-row"><span>Mainnet funds</span><strong>Disabled</strong></div></div></section><div className="notice"><strong>Settlement rule</strong><br/>An on-chain transfer is not a paid school fee. The learner’s UGX ledger changes only after required fiat delivery is confirmed.</div></aside></div></>}
+import {
+  CircleCheck,
+  ExternalLink,
+  HandHeart,
+  Landmark,
+  LockKeyhole,
+  ShieldCheck,
+  WalletCards,
+} from 'lucide-react';
+
+import { PageHeader, SectionHeader } from '@/components/ui';
+
+const stages = [
+  {
+    number: '1',
+    title: 'Invoice verified',
+    detail: 'The school publishes a privacy-safe campaign linked to a real UGX obligation.',
+  },
+  {
+    number: '2',
+    title: 'Family contributes',
+    detail: 'A parent, relative, sponsor or diaspora donor sends devnet SOL from their own wallet.',
+  },
+  {
+    number: '3',
+    title: 'Signature retained',
+    detail: 'HarambeeOne records the public Solana signature beside the anonymous pledge reference.',
+  },
+  {
+    number: '4',
+    title: 'School verifies',
+    detail: 'The bursar confirms the destination and amount before allocating value to the learner ledger.',
+  },
+];
+
+export default function Settlement() {
+  return (
+    <>
+      <PageHeader
+        eyebrow="SomaFund · Solana devnet"
+        title="Collaborative school-fee vault operations"
+        description="A transparent contribution rail for verified school invoices, built on HarambeeOne's controlled UGX ledger."
+        actions={
+          <a
+            className="btn primary"
+            href="https://explorer.solana.com/?cluster=devnet"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <ExternalLink size={16} />
+            Open devnet explorer
+          </a>
+        }
+      />
+
+      <section className="panel" style={{ marginBottom: 18 }}>
+        <SectionHeader
+          title="Contribution and verification flow"
+          subtitle="Every on-chain movement remains independently inspectable; learner identity stays off-chain"
+        />
+        <div className="flow-line">
+          {stages.map((stage, index) => (
+            <div style={{ display: 'contents' }} key={stage.number}>
+              <div className={index < 2 ? 'flow-step done' : index === 2 ? 'flow-step active' : 'flow-step'}>
+                <span>{stage.number}</span>
+                <strong>{stage.title}</strong>
+                <small>{stage.detail}</small>
+              </div>
+              {index < stages.length - 1 && <i className="flow-rule" />}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="content-grid">
+        <section className="panel">
+          <SectionHeader
+            title="What Solana does in this MVP"
+            subtitle="A real devnet payment path, not a simulated settlement table"
+          />
+          <div className="stack">
+            <div className="policy-box">
+              <h3><WalletCards size={18} /> Donor-controlled transfer</h3>
+              <p>The donor connects a Wallet Standard wallet and authorises a direct devnet SOL transfer to the school-owned address.</p>
+            </div>
+            <div className="policy-box">
+              <h3><CircleCheck size={18} /> Verifiable proof</h3>
+              <p>The signature links the public contribution receipt to Solana Explorer while the private student record remains in Supabase.</p>
+            </div>
+            <div className="policy-box">
+              <h3><HandHeart size={18} /> Shared contributions</h3>
+              <p>Many contributors can fund the same verified invoice in small amounts, including relatives and diaspora sponsors.</p>
+            </div>
+          </div>
+        </section>
+
+        <aside className="stack">
+          <section className="panel">
+            <SectionHeader title="Hackathon safety gate" subtitle="Deliberately limited to devnet" />
+            <div className="policy-box">
+              <div className="policy-row"><span>Solana cluster</span><strong>Devnet</strong></div>
+              <div className="policy-row"><span>Custody model</span><strong>Direct to school</strong></div>
+              <div className="policy-row"><span>UGX conversion</span><strong>Demo quote only</strong></div>
+              <div className="policy-row"><span>Mainnet funds</span><strong>Disabled</strong></div>
+            </div>
+          </section>
+          <div className="notice">
+            <strong><ShieldCheck size={16} /> Accounting rule</strong><br />
+            A Solana signature proves a transfer. It does not by itself settle a school invoice; the bursar must verify and allocate the pledge.
+          </div>
+          <div className="notice">
+            <strong><LockKeyhole size={16} /> Privacy rule</strong><br />
+            No learner name, phone number, school identifier or invoice detail is written to Solana.
+          </div>
+          <div className="notice">
+            <strong><Landmark size={16} /> Next production step</strong><br />
+            Replace the direct-transfer MVP with an audited programme-derived vault before any mainnet or custody launch.
+          </div>
+        </aside>
+      </div>
+    </>
+  );
+}

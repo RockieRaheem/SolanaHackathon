@@ -37,7 +37,7 @@ from harambeeone_api.models import (
     Person,
     Requirement,
     School,
-    StellarAnchor,
+    SettlementAnchor,
     Stream,
     Student,
     StudentFeeAssignment,
@@ -1014,7 +1014,9 @@ def _payment_summary(session: Session, payment: Payment) -> PaymentSummary:
         raise HTTPException(status_code=409, detail="Payment allocation is incomplete")
     student = session.get(Student, first.student_id)
     person = session.get(Person, student.person_id) if student else None
-    anchor = session.scalar(select(StellarAnchor).where(StellarAnchor.payment_id == payment.id))
+    anchor = session.scalar(
+        select(SettlementAnchor).where(SettlementAnchor.payment_id == payment.id)
+    )
     if student is None or person is None or anchor is None:
         raise HTTPException(status_code=409, detail="Payment record is incomplete")
     purpose = (
@@ -1035,7 +1037,7 @@ def _payment_summary(session: Session, payment: Payment) -> PaymentSummary:
         correction_reason=payment.correction_reason,
         purpose=purpose,
         allocations=allocations,
-        stellar_status=anchor.status,
+        settlement_status=anchor.status,
         commitment_hash=anchor.commitment_hash,
         received_at=payment.received_at.isoformat(),
     )
@@ -1501,7 +1503,7 @@ def record_payment(
         f"{payment.id}|{payload.amount}|UGX|{reference}".encode()
     ).hexdigest()
     session.add(
-        StellarAnchor(
+        SettlementAnchor(
             id=uuid.uuid4(), payment_id=payment.id, commitment_hash=commitment, status="pending"
         )
     )
@@ -1657,7 +1659,7 @@ def correct_payment(
                 description=f"{transaction_type.title()} of {original.receipt_no}",
                 payment_id=correction.id,
             ),
-            StellarAnchor(
+            SettlementAnchor(
                 id=uuid.uuid4(),
                 payment_id=correction.id,
                 commitment_hash=hashlib.sha256(

@@ -23,9 +23,9 @@ from harambeeone_api.models import (
     Payment,
     PaymentAllocation,
     Person,
+    SettlementAnchor,
     StatementImport,
     StatementTransaction,
-    StellarAnchor,
     Student,
 )
 from harambeeone_api.periods import resolve_period
@@ -454,7 +454,7 @@ def _post_reconciled_payment(
                 description="Reconciled source collection",
                 payment_id=payment.id,
             ),
-            StellarAnchor(
+            SettlementAnchor(
                 payment_id=payment.id,
                 commitment_hash=hashlib.sha256(
                     f"{payment.id}|{transaction.amount}|UGX|{transaction.source_reference}".encode()
@@ -664,7 +664,7 @@ def undo_transaction(
                 description=f"Undo reconciliation {transaction.source_reference}",
                 payment_id=reversal.id,
             ),
-            StellarAnchor(
+            SettlementAnchor(
                 payment_id=reversal.id,
                 commitment_hash=hashlib.sha256(
                     f"{reversal.id}|{-original.amount}|UGX|{reversal.external_reference}".encode()

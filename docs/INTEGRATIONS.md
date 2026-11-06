@@ -19,6 +19,6 @@ Africa's Talking can be the first SMS and later USSD implementation, but the app
 
 Sunbird AI can be implemented behind a LanguageService interface. Translation failure must never stop registration, payment or settlement workflows.
 
-## Stellar
+## Solana
 
-The settlement layer must treat on-ramp, on-chain transfer and off-ramp as separate states. Production requires a validated Uganda-compatible provider corridor and compliance review.
+The hackathon rail uses Solana devnet and a school-owned Wallet Standard destination. The ledger must treat wallet transfer, school verification, UGX allocation, and any future off-ramp as separate states. Production requires an audited programme, a validated Uganda-compatible provider corridor, live pricing, RPC confirmation, and compliance review.

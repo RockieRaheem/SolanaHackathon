@@ -40,18 +40,18 @@ The active product serves the school bursar and the minimum learner, guardian, a
 - Optional privacy-minimized Gemma review with mandatory human publication approval.
 - Public campaign discovery, pledge tracking, verified settlement posting, and redacted outcomes.
 
-### In progress
+### Hackathon priority
 
-The current delivery priority is **Slice 8, Phase 8: final verification**. Reports, period closing, balance carry-forward, learner rollover, and controlled reopening are complete. The final phase will prove the complete bursar journey, financial equation, historical reproducibility, exports, security boundaries, and production controls.
+For the November 6-8 Solana Hackathon, the user has explicitly prioritised **SomaFund**: collaborative contributions toward verified school-fee invoices. The current slice adds a real Solana devnet transfer and transaction proof to the existing Support workflow while retaining Supabase as the private financial authority.
 
-See the [MVP roadmap](docs/MVP_ROADMAP.md) and [Support expansion plan](docs/HARAMBEE_SUPPORT_EXPANSION_PLAN.md) for completion gates and current evidence.
+See the [SomaFund Solana build guide](docs/SOMAFUND_SOLANA_HACKATHON.md), [MVP roadmap](docs/MVP_ROADMAP.md), and [Support expansion plan](docs/HARAMBEE_SUPPORT_EXPANSION_PLAN.md).
 
 ### Deferred
 
 The following areas remain outside the active product until the bursar completion gate passes:
 
 - General sponsor and programme administration.
-- Production Stellar or Soroban settlement.
+- Production mainnet custody, escrow, or token settlement.
 - Academic grading, attendance, teaching, payroll, and procurement.
 - Automated SMS, WhatsApp, SchoolPay, bank, and mobile-money integrations.
 - Mainnet assets or direct custody of school funds.
@@ -87,7 +87,8 @@ School identifies a real overdue obligation
   -> Capable learner's view is recorded
   -> Private case is reviewed by the school
   -> Owner approves anonymous publication
-  -> Donor records a pledge to a school-controlled channel
+  -> Donor sends devnet SOL to the verified school wallet
+  -> HarambeeOne retains the public transaction signature
   -> School independently verifies settlement
   -> Payment, allocation, ledger credit, receipt, and audit event post together
   -> Donor and guardian receive privacy-safe status and outcome information
@@ -106,15 +107,11 @@ Campaign money must never be sent to a guardian or learner. A target cannot exce
 +--------------------+      +---------v----------+      +----------------------+
 | Next.js web app    +----->+ Server API gateway +----->+ FastAPI application  |
 | staff and portals  |      | session forwarding |      | RBAC and workflows   |
-+--------------------+      +--------------------+      +----------+-----------+
-                                                                  |
-                                                       +----------v-----------+
-                                                       | Supabase PostgreSQL  |
-                                                       | ledger, RLS, audit   |
-                                                       +----------------------+
-
-Signed-out donors -> restricted public gateway -> anonymous Support endpoints
-Gemma review      -> server-only Google API call -> validated, redacted response
++---------+----------+      +--------------------+      +----------+-----------+
+          |                                                       |
+          | donor signs transfer                                  v
+          +----------------> Solana devnet             Supabase PostgreSQL
+                             public signature          ledger, RLS, audit
 ```
 
 ### Financial invariants
@@ -139,10 +136,8 @@ Gemma review      -> server-only Google API call -> validated, redacted response
 | Database | Supabase PostgreSQL | Financial ledger, tenant data, RLS, triggers, and audit evidence |
 | Migrations | Alembic | Versioned database changes and security policies |
 | AI | Gemma 4 through the Gemini API | Optional, consented, privacy-minimized case review |
+| Solana | Kit, Wallet Standard, System Program | Devnet wallet connection, transfer, and public transaction proof |
 | Tooling | pnpm, uv, Ruff, Pytest, ESLint | Reproducible development and verification |
-| Deferred protocol | Rust and Soroban SDK | Experimental post-bursar education-funding contract |
-
-The NestJS/Prisma application under `apps/api` is a legacy migration reference. New operational endpoints belong in the FastAPI service.
 
 ## Repository layout
 
@@ -150,16 +145,13 @@ The NestJS/Prisma application under `apps/api` is a legacy migration reference. 
 HarambeeOne/
 |- apps/
 |  |- web/                 # Active Next.js application
-|  |- backend/             # Active FastAPI application and Alembic migrations
-|  `- api/                 # Legacy NestJS/Prisma reference
+|  - backend/              # Active FastAPI application and Alembic migrations
 |- packages/
-|  |- shared/              # Small shared TypeScript vocabulary
-|  `- soroban/             # Deferred experimental contract
+|  - shared/               # Shared TypeScript vocabulary
 |- docs/                   # Roadmap, architecture, security, and integration notes
-|- scripts/                # Repository setup helpers
 |- SUPPORT/                # Product documents, diagrams, and brand assets
 |- docker-compose.yml      # Optional local PostgreSQL, Redis, and RabbitMQ services
-`- AGENTS.md               # Mandatory repository working rules
+- AGENTS.md                # Mandatory repository working rules
 ```
 
 ## Prerequisites
@@ -169,6 +161,7 @@ HarambeeOne/
 - Python 3.12.
 - [uv](https://docs.astral.sh/uv/).
 - A Supabase project for authentication and the PostgreSQL database.
+- A Solana Wallet Standard browser wallet configured for devnet.
 - A Google AI Studio API key only when testing the optional Gemma integration.
 
 Redis and RabbitMQ are present in the local Compose file for planned background work, but they are not required by the current request path.
@@ -334,10 +327,11 @@ Before changing code, database objects, configuration, documentation, or interfa
 7. Update roadmap evidence only when every completion gate passes.
 8. Commit one coherent change before beginning another slice.
 
-Do not use sponsor or blockchain work to bypass the bursar completion gate.
+Hackathon work must preserve the bursar ledger, tenant, audit, and privacy gates even when the user explicitly prioritises the Solana slice.
 
 ## Documentation
 
+- [SomaFund Solana Hackathon build](docs/SOMAFUND_SOLANA_HACKATHON.md)
 - [Developer handoff](docs/DEVELOPER_HANDOFF.md)
 - [Canonical MVP roadmap](docs/MVP_ROADMAP.md)
 - [Repository guide](docs/REPOSITORY_GUIDE.md)

@@ -731,7 +731,7 @@ class PaymentSummary(BaseModel):
     correction_reason: str | None
     purpose: str
     allocations: list[PaymentAllocationSummary]
-    stellar_status: str
+    settlement_status: str
     commitment_hash: str
     received_at: str
 
@@ -789,13 +789,9 @@ class ArrearsFollowUpCreate(BaseModel):
     school_id: uuid.UUID
     period_id: uuid.UUID
     student_id: uuid.UUID
-    contact_method: str = Field(
-        pattern="^(call|in_person|email|sms|whatsapp|letter|other)$"
-    )
+    contact_method: str = Field(pattern="^(call|in_person|email|sms|whatsapp|letter|other)$")
     contacted_person: str = Field(min_length=2, max_length=120)
-    outcome: str = Field(
-        pattern="^(contacted|no_answer|commitment|dispute|statement_sent|other)$"
-    )
+    outcome: str = Field(pattern="^(contacted|no_answer|commitment|dispute|statement_sent|other)$")
     note: str = Field(min_length=3, max_length=1000)
     next_action: str | None = Field(default=None, max_length=240)
     next_action_date: date | None = None
@@ -966,12 +962,29 @@ class SupportPledgeVerify(BaseModel):
 
 class SupportPaymentDestinationCreate(BaseModel):
     school_id: uuid.UUID
-    channel: str = Field(pattern="^(schoolpay|bank|mobile_money)$")
+    channel: str = Field(pattern="^(schoolpay|bank|mobile_money|solana)$")
     label: str = Field(min_length=2, max_length=100)
     provider_name: str = Field(min_length=2, max_length=100)
     account_name: str = Field(min_length=2, max_length=160)
     account_reference: str = Field(min_length=3, max_length=100)
     instructions: str = Field(min_length=10, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_solana_wallet(self):
+        if self.channel == "solana":
+            reference = self.account_reference.strip()
+            alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+            decoded = 0
+            for char in reference:
+                position = alphabet.find(char)
+                if position < 0:
+                    raise ValueError("Enter a valid base58 Solana wallet address")
+                decoded = decoded * 58 + position
+            leading_zero_bytes = len(reference) - len(reference.lstrip("1"))
+            decoded_bytes = (decoded.bit_length() + 7) // 8
+            if leading_zero_bytes + decoded_bytes != 32:
+                raise ValueError("Enter a valid base58 Solana wallet address")
+        return self
 
 
 class SupportPaymentDestinationDecision(BaseModel):

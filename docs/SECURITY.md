@@ -29,6 +29,6 @@ Before production use with real students or funds:
 - Signed webhooks and replay protection.
 - Backup restore exercises and incident-response runbooks.
 - OWASP ASVS-based secure development checks and independent penetration testing.
-- Independent Soroban audit before meaningful mainnet value is placed in contracts.
-- No student names, NINs, phone numbers, DOB, marks or private documents on Stellar.
+- Independent Solana programme audit before meaningful mainnet value is placed in programme-controlled accounts.
+- No student names, NINs, phone numbers, dates of birth, marks, school identifiers, invoice details, or private documents on Solana.
 - AI providers receive only the minimum authorised context and must not be treated as the source of financial truth.

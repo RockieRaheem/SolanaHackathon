@@ -33,7 +33,7 @@ from harambeeone_api.models import (
     Person,
     Requirement,
     School,
-    StellarAnchor,
+    SettlementAnchor,
     Student,
     StudentRequirement,
     SupportAiReview,
@@ -2263,9 +2263,7 @@ def verify_support_pledge(
         payment_id=payment.id,
         student_id=student.id,
         requirement_assignment_id=support_case.requirement_assignment_id,
-        allocation_type=(
-            "requirement" if support_case.requirement_assignment_id else "fees"
-        ),
+        allocation_type=("requirement" if support_case.requirement_assignment_id else "fees"),
         amount=pledge.amount,
     )
     ledger = LedgerEntry(
@@ -2282,11 +2280,15 @@ def verify_support_pledge(
     commitment = hashlib.sha256(
         f"{payment.id}|{pledge.amount}|{pledge.currency}|{financial_reference}".encode()
     ).hexdigest()
-    anchor = StellarAnchor(
+    anchor = SettlementAnchor(
         id=uuid.uuid4(),
         payment_id=payment.id,
         commitment_hash=commitment,
-        status="pending",
+        network="solana-devnet" if destination.channel == "solana" else "offchain",
+        status="confirmed" if destination.channel == "solana" else "pending",
+        transaction_signature=(
+            pledge.external_reference if destination.channel == "solana" else None
+        ),
     )
     pledge.status = "verified"
     pledge.payment_id = payment.id

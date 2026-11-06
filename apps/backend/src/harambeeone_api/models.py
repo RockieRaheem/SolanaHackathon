@@ -1142,9 +1142,7 @@ class ArrearsPaymentPromise(Base):
         UniqueConstraint("follow_up_id", name="uq_arrears_promise_followup"),
         CheckConstraint("promised_amount > 0", name="ck_arrears_promises_amount"),
         CheckConstraint("paid_at_creation >= 0", name="ck_arrears_promises_paid_baseline"),
-        CheckConstraint(
-            "status in ('active','cancelled')", name="ck_arrears_promises_status"
-        ),
+        CheckConstraint("status in ('active','cancelled')", name="ck_arrears_promises_status"),
         Index("ix_arrears_promises_account", "school_id", "period_id", "student_id", "due_date"),
     )
 
@@ -1172,16 +1170,16 @@ class ArrearsPaymentPromise(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class StellarAnchor(Base):
-    __tablename__ = "stellar_anchors"
+class SettlementAnchor(Base):
+    __tablename__ = "settlement_anchors"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     payment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("payments.id"), unique=True)
     commitment_hash: Mapped[str] = mapped_column(String(64), unique=True)
-    network: Mapped[str] = mapped_column(String(20), default="testnet")
+    network: Mapped[str] = mapped_column(String(32), default="offchain")
     status: Mapped[str] = mapped_column(String(20), default="pending")
-    transaction_hash: Mapped[str | None] = mapped_column(String(64))
-    ledger_number: Mapped[int | None]
+    transaction_signature: Mapped[str | None] = mapped_column(String(128))
+    confirmation_slot: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -1515,9 +1513,7 @@ class LearnerRollover(Base):
     __table_args__ = (
         UniqueConstraint("source_close_id", name="uq_learner_rollovers_source_close"),
         UniqueConstraint("source_period_id", name="uq_learner_rollovers_source_period"),
-        UniqueConstraint(
-            "destination_period_id", name="uq_learner_rollovers_destination_period"
-        ),
+        UniqueConstraint("destination_period_id", name="uq_learner_rollovers_destination_period"),
         UniqueConstraint("school_id", "idempotency_key", name="uq_learner_rollovers_key"),
         CheckConstraint("candidate_count >= 0", name="ck_learner_rollovers_candidates"),
         CheckConstraint(
@@ -1993,7 +1989,7 @@ class SupportPaymentDestination(Base):
     __table_args__ = (
         UniqueConstraint("school_id", "channel", "account_reference"),
         CheckConstraint(
-            "channel in ('schoolpay','bank','mobile_money')",
+            "channel in ('schoolpay','bank','mobile_money','solana')",
             name="ck_support_payment_destinations_channel",
         ),
         CheckConstraint(

@@ -354,7 +354,7 @@ export default function SupportAdmin() {
     </form></Modal>}
 
     {modal === 'destination' && school && <Modal title="Add school payment destination" close={() => setModal(null)}><form className="modal-form" onSubmit={createDestination}>
-      <label>Payment channel<select name="channel"><option value="schoolpay">SchoolPay</option><option value="bank">Bank account</option><option value="mobile_money">Institution mobile money</option></select></label>
+      <label>Payment channel<select name="channel"><option value="schoolpay">SchoolPay</option><option value="bank">Bank account</option><option value="mobile_money">Institution mobile money</option><option value="solana">Solana devnet wallet</option></select></label>
       <label>Display label<input name="label" minLength={2} required placeholder="SchoolPay fees code"/></label>
       <label>Provider or bank<input name="provider_name" minLength={2} required placeholder="SchoolPay, Stanbic Bank, MTN…"/></label>
       <label>Institution account name<input value={school.name} readOnly/><small>For safety, this must match the registered institution.</small></label>

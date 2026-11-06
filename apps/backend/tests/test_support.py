@@ -869,6 +869,54 @@ def test_support_destination_must_be_owned_by_school(support_workspace) -> None:
     assert "institution name" in result.json()["detail"]
 
 
+def test_support_accepts_only_valid_institution_solana_wallets(support_workspace) -> None:
+    _engine, _user_id, ids, client = support_workspace
+    created = client.post(
+        "/api/v1/support/payment-destinations",
+        json={
+            "school_id": str(ids["school"]),
+            "channel": "solana",
+            "label": "SomaFund devnet vault",
+            "provider_name": "Solana devnet",
+            "account_name": "Trust Academy",
+            "account_reference": "11111111111111111111111111111111",
+            "instructions": "Connect a devnet wallet and confirm the transaction signature.",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["channel"] == "solana"
+    assert created.json()["verification_status"] == "pending"
+
+    invalid = client.post(
+        "/api/v1/support/payment-destinations",
+        json={
+            "school_id": str(ids["school"]),
+            "channel": "solana",
+            "label": "Invalid wallet",
+            "provider_name": "Solana devnet",
+            "account_name": "Trust Academy",
+            "account_reference": "not-a-solana-wallet",
+            "instructions": "This malformed wallet must never be accepted.",
+        },
+    )
+    assert invalid.status_code == 422
+
+    wrong_length = client.post(
+        "/api/v1/support/payment-destinations",
+        json={
+            "school_id": str(ids["school"]),
+            "channel": "solana",
+            "label": "Wrong length wallet",
+            "provider_name": "Solana devnet",
+            "account_name": "Trust Academy",
+            "account_reference": "1" * 44,
+            "instructions": "A base58 value that is not a 32-byte public key must be rejected.",
+        },
+    )
+    assert wrong_length.status_code == 422
+
+
+
 def test_support_notifications_are_durable_scoped_and_individually_read(
     support_workspace,
 ) -> None:
@@ -1144,9 +1192,7 @@ def test_donor_gemma_assistant_enforces_ownership_privacy_and_rate_limit(
     assert limited.headers["retry-after"] == "600"
 
 
-def test_donor_gemma_blocks_identity_and_authority_claims(
-    support_workspace, monkeypatch
-) -> None:
+def test_donor_gemma_blocks_identity_and_authority_claims(support_workspace, monkeypatch) -> None:
     engine, _owner_user_id, ids, client = support_workspace
     _case_id, code = create_reviewed_campaign(client, ids)
     donor_id = uuid.uuid4()
@@ -1205,12 +1251,7 @@ def test_donor_gemma_blocks_identity_and_authority_claims(
 def test_gemma_json_parser_accepts_only_plain_or_complete_fenced_json() -> None:
     expected = {"intent": "portal_help", "can_mutate": False}
     assert support_assistants.parse_gemma_json(json.dumps(expected)) == expected
-    assert (
-        support_assistants.parse_gemma_json(
-            f"```json\n{json.dumps(expected)}\n```"
-        )
-        == expected
-    )
+    assert support_assistants.parse_gemma_json(f"```json\n{json.dumps(expected)}\n```") == expected
     with pytest.raises(ValueError):
         support_assistants.parse_gemma_json(
             f"Here is your answer:\n```json\n{json.dumps(expected)}\n```"

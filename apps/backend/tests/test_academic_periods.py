@@ -43,9 +43,9 @@ from harambeeone_api.models import (
     School,
     SchoolMembership,
     SchoolProgramme,
+    SettlementAnchor,
     StatementImport,
     StatementTransaction,
-    StellarAnchor,
     Student,
     StudentFeeAssignment,
 )
@@ -755,8 +755,7 @@ def test_balance_carry_forward_posts_debt_and_credit_once(period_workspace) -> N
     assert historical_close.json()["snapshot_hash"] == source_hash
     assert Decimal(historical_close.json()["closing_balance"]) == Decimal("275")
     assert {
-        Decimal(learner["closing_balance"])
-        for learner in historical_close.json()["learners"]
+        Decimal(learner["closing_balance"]) for learner in historical_close.json()["learners"]
     } == {Decimal("350"), Decimal("-75")}
 
     with Session(engine) as session:
@@ -1788,7 +1787,7 @@ def test_selected_period_filters_core_bursar_registers(period_workspace) -> None
             session.add_all(
                 [
                     PaymentAllocation(payment_id=payment.id, student_id=student.id, amount=amount),
-                    StellarAnchor(
+                    SettlementAnchor(
                         payment_id=payment.id,
                         commitment_hash=f"{index:064x}",
                         status="pending",

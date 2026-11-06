@@ -38,7 +38,7 @@ Closing a period is a database transaction, not a visual status change. The serv
 
 ## Repository boundaries
 
-The active runtime is `apps/web` plus `apps/backend`. The NestJS service in `apps/api`, Stitch mock-ups, Support source documents, and Soroban package are retained references or deferred experiments. See the [repository guide](REPOSITORY_GUIDE.md) for detailed ownership.
+The active runtime is the Next.js web app and FastAPI backend. Supabase remains the private financial authority; Solana devnet supplies public contribution evidence. See the [repository guide](REPOSITORY_GUIDE.md) for detailed ownership.
 
 ## Automation boundary
 

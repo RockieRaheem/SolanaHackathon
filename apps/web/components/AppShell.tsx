@@ -29,6 +29,7 @@ const navGroups = [
     { label: 'Reconciliation', href: '/reconciliation', icon: ListChecks },
     { label: 'Overdue accounts', href: '/arrears', icon: AlertTriangle },
     { label: 'Financial reports', href: '/reports', icon: BarChart3 },
+    { label: 'Solana operations', href: '/settlement', icon: WalletCards },
   ]},
   { label: 'Support', items: [
     { label: 'Manage campaigns', href: '/support-admin', icon: HandHeart },

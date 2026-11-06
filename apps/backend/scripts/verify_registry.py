@@ -40,7 +40,7 @@ def main() -> None:
                     "payments",
                     "payment_allocations",
                     "ledger_entries",
-                    "stellar_anchors",
+                    "settlement_anchors",
                 ]
             },
         ).scalar_one()

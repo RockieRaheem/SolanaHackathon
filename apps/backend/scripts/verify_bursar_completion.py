@@ -4,7 +4,7 @@ from sqlalchemy import text
 
 from harambeeone_api.database import get_engine
 
-EXPECTED_HEAD = "a72d5e8c19f4"
+EXPECTED_HEAD = "b6f4d9a2c810"
 TENANT_TABLES = (
     "academic_years",
     "academic_periods",

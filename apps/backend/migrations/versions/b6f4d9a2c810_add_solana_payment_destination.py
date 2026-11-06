@@ -1,7 +1,7 @@
 """Add Solana destinations and provider-neutral settlement evidence.
 
 Revision ID: b6f4d9a2c810
-Revises: a72d5e8c19f4
+Revises: a3d8e71c5f20
 Create Date: 2026-11-06 20:30:00
 """
 
@@ -11,12 +11,89 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b6f4d9a2c810"
-down_revision: str | None = "a72d5e8c19f4"
+down_revision: str | None = "a3d8e71c5f20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF to_regclass('public.push_deliveries') IS NOT NULL
+             AND to_regclass('public.legacy_firebase_push_deliveries_archive') IS NULL THEN
+            ALTER TABLE public.push_deliveries
+              RENAME TO legacy_firebase_push_deliveries_archive;
+          END IF;
+          IF to_regclass('public.push_installations') IS NOT NULL
+             AND to_regclass('public.legacy_firebase_push_installations_archive') IS NULL THEN
+            ALTER TABLE public.push_installations
+              RENAME TO legacy_firebase_push_installations_archive;
+          END IF;
+          IF to_regclass('public.identity_provider_accounts') IS NOT NULL
+             AND to_regclass('public.legacy_firebase_identity_accounts_archive') IS NULL THEN
+            ALTER TABLE public.identity_provider_accounts
+              RENAME TO legacy_firebase_identity_accounts_archive;
+          END IF;
+        END $$;
+        """
+    )
+    op.execute(
+        """
+        DO $$
+        DECLARE archived_table text;
+        BEGIN
+          FOREACH archived_table IN ARRAY ARRAY[
+            'legacy_firebase_push_deliveries_archive',
+            'legacy_firebase_push_installations_archive',
+            'legacy_firebase_identity_accounts_archive'
+          ] LOOP
+            IF to_regclass('public.' || archived_table) IS NOT NULL THEN
+              EXECUTE format(
+                'REVOKE ALL ON TABLE public.%I FROM anon, authenticated',
+                archived_table
+              );
+            END IF;
+          END LOOP;
+        END $$;
+        """
+    )
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'support_referrals'
+              AND column_name = 'gemini_processing'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'support_referrals'
+              AND column_name = 'gemma_processing'
+          ) THEN
+            ALTER TABLE public.support_referrals
+              RENAME COLUMN gemini_processing TO gemma_processing;
+          END IF;
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'support_consents'
+              AND column_name = 'gemini_processing'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'support_consents'
+              AND column_name = 'gemma_processing'
+          ) THEN
+            ALTER TABLE public.support_consents
+              RENAME COLUMN gemini_processing TO gemma_processing;
+          END IF;
+        END $$;
+        """
+    )
     op.rename_table("stellar_anchors", "settlement_anchors")
     op.execute("UPDATE settlement_anchors SET network = 'offchain' WHERE network = 'testnet'")
     op.alter_column(
@@ -41,6 +118,22 @@ def upgrade() -> None:
         new_column_name="confirmation_slot",
         existing_type=sa.Integer(),
         existing_nullable=True,
+    )
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'uq_stellar_anchors_transaction_hash'
+              AND conrelid = 'public.settlement_anchors'::regclass
+          ) THEN
+            ALTER TABLE public.settlement_anchors
+              RENAME CONSTRAINT uq_stellar_anchors_transaction_hash
+              TO uq_settlement_anchors_transaction_signature;
+          END IF;
+        END $$;
+        """
     )
     op.drop_constraint(
         "ck_support_payment_destinations_channel",

@@ -1,0 +1,22 @@
+.guardian-referrals > h2 { margin-bottom: 18px; }
+.guardian-referral { margin-top: 12px; border: 1px solid #d7d5cc; background: #fff; }
+.guardian-referral > header { padding: 18px; display: flex; justify-content: space-between; gap: 15px; border-bottom: 1px solid #e3e1da; }
+.guardian-referral header span { color: #687069; font-size: 9px; text-transform: uppercase; letter-spacing: .07em; }
+.guardian-referral header h3 { margin: 5px 0; color: #17291f; font: 500 21px Georgia, serif; }
+.guardian-referral header p { margin: 0; color: #697069; font-size: 11px; }
+.guardian-referral header > strong { align-self: flex-start; padding: 5px 8px; background: #f0f2ed; color: #46554b; font-size: 9px; text-transform: capitalize; }
+.guardian-referral form { padding: 18px; }
+.guardian-referral form > label:not(.portal-check) { display: block; margin: 13px 0; color: #555e57; font-size: 10px; font-weight: 700; }
+.guardian-referral select, .guardian-referral input:not([type=checkbox]) { display: block; width: 100%; height: 42px; margin-top: 7px; padding: 0 10px; border: 1px solid #bfc5bf; background: #fff; }
+.guardian-referral textarea{display:block;width:100%;min-height:104px;margin-top:7px;padding:11px;border:1px solid #bfc5bf;background:#fff;resize:vertical;font:inherit;line-height:1.55}.guardian-referral input:focus,.guardian-referral select:focus,.guardian-referral textarea:focus{outline:0;border-color:#466f55;box-shadow:0 0 0 3px rgba(70,111,85,.12)}.guardian-case-editor{border-top:1px solid #e3e1da;background:#faf9f6}.case-editor-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding-bottom:14px;border-bottom:1px solid #e3e1da}.case-editor-heading span{color:#687069;font-size:9px;text-transform:uppercase;letter-spacing:.08em}.case-editor-heading h4{margin:5px 0 0;color:#17291f;font:500 20px Georgia,serif}.case-editor-heading small{max-width:230px;color:#697069;font-size:10px;line-height:1.5}.guardian-case-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.guardian-case-editor label small{display:block;margin-top:5px;color:#747b75;font-size:9px;font-weight:400}.public-preview{margin-top:18px;padding:16px;border:1px solid #d8d6ce;background:#fff}.public-preview>strong{color:#17291f;font:500 16px Georgia,serif}.public-preview>p{margin:5px 0 13px;color:#697069;font-size:10px;line-height:1.5}.guardian-case-editor footer{display:flex;justify-content:flex-end;gap:8px;margin-top:17px}.change-request{margin:14px 0;padding:12px 14px;border-left:3px solid #a7742b;background:#fff7e8}.change-request strong{color:#654b20;font-size:10px}.change-request p{margin:4px 0 0;color:#705a35;font-size:10px;line-height:1.5}.case-review-state{display:flex;align-items:flex-start;gap:13px;padding:20px}.case-review-state>svg{flex:none;color:#3f6b50}.case-review-state>div{flex:1}.case-review-state strong{color:#17291f;font:500 17px Georgia,serif}.case-review-state p{margin:5px 0 12px;color:#697069;font-size:10px;line-height:1.5}.case-review-state>.btn{align-self:center}@media(max-width:640px){.case-editor-heading,.case-review-state{flex-direction:column}.guardian-case-fields{grid-template-columns:1fr}.case-editor-heading small{max-width:none}.guardian-case-editor footer{flex-direction:column}.guardian-case-editor footer .btn{width:100%}.case-review-state>.btn{align-self:stretch}}
+.privacy-notice { display: flex; gap: 10px; padding: 13px; margin-bottom: 16px; border-left: 3px solid #3f6b50; background: #edf5ef; }
+.privacy-notice svg { flex: 0 0 auto; color: #3f6b50; }
+.privacy-notice p { margin: 0; color: #46544a; font-size: 10px; line-height: 1.55; }
+.privacy-notice strong { display: block; margin-bottom: 4px; }
+.referral-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.consent-summary { display: flex; align-items: center; gap: 12px; padding: 18px; background: #f4f7f2; }
+.consent-summary > svg { color: #3f6b50; }
+.consent-summary p { flex: 1; margin: 0; color: #566159; font-size: 10px; line-height: 1.55; }
+.consent-summary strong { display: block; color: #1c3d2b; }
+.closed-referral { margin: 0; padding: 18px; color: #697069; font-size: 11px; }
+.referral-register { margin-bottom: 18px; }

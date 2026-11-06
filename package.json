@@ -1,0 +1,15 @@
+{
+  "name": "harambeeone",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @harambeeone/web --filter @harambeeone/backend dev",
+    "dev:web": "pnpm --filter @harambeeone/web dev",
+    "dev:api": "pnpm --filter @harambeeone/backend dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "db:revision": "pnpm --filter @harambeeone/backend db:revision",
+    "db:migrate": "pnpm --filter @harambeeone/backend db:migrate",
+    "db:seed": "pnpm --filter @harambeeone/backend db:seed"
+  }
+}

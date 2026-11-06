@@ -1,0 +1,18 @@
+'use client';
+
+import Link from 'next/link';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FileCheck2 } from 'lucide-react';
+import PortalShell from '@/components/PortalShell';
+import { clientFetch as fetch } from '@/lib/api/client';
+
+type Referral={id:string;school_name:string;learner_name:string;case:null|{public_code:string;title:string;status:string}};
+
+export default function GuardianOutcomesPage(){
+  const [items,setItems]=useState<Referral[]>([]),[loading,setLoading]=useState(true),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const load=useCallback(async()=>{try{const response=await fetch('/api/backend/api/v1/support/guardian/referrals');const body=await response.json();if(!response.ok)throw new Error(body.detail||'Campaign outcomes could not be loaded.');setItems(body);}catch(reason){setError(reason instanceof Error?reason.message:'Campaign outcomes could not be loaded.');}finally{setLoading(false);}},[]);
+  useEffect(()=>{void load();},[load]);
+  async function submit(event:FormEvent<HTMLFormElement>,id:string){event.preventDefault();setBusy(id);setError('');setNotice('');const form=new FormData(event.currentTarget);try{const response=await fetch(`/api/backend/api/v1/support/guardian/referrals/${id}/acknowledgements`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({statement:form.get('statement'),attendance_band:form.get('attendance_band')||null})});const body=await response.json();if(!response.ok)throw new Error(body.detail||'Your acknowledgement could not be sent.');event.currentTarget.reset();setNotice('Your private update was sent to the school for redaction and human review.');}catch(reason){setError(reason instanceof Error?reason.message:'Your acknowledgement could not be sent.');}finally{setBusy('');}}
+  const eligible=items.filter(item=>item.case&&['funded','closed'].includes(item.case.status));
+  return <PortalShell label="Guardian workspace"><section className="portal-intro"><span>Outcome assurance</span><h1>Confirm what changed.</h1><p>Your original statement remains private. Donors see it only after the school approves a non-identifying version.</p></section>{error&&<div className="portal-error" role="alert">{error}</div>}{notice&&<div className="success-banner" role="status">{notice}</div>}{loading?<div className="portal-state">Loading eligible campaigns…</div>:eligible.length?<section className="portal-section"><h2>Funded learner support</h2>{eligible.map(item=><form className="guardian-case-editor" key={item.id} onSubmit={event=>submit(event,item.id)}><strong>{item.school_name} · {item.case!.public_code}</strong><p>{item.case!.title}</p><label>Private acknowledgement<textarea name="statement" minLength={10} maxLength={500} required placeholder="Confirm whether the obligation was met and how learning continuity changed."/></label><label>Attendance continuity (optional)<select name="attendance_band" defaultValue=""><option value="">Not reported</option><option value="below_50">Below 50%</option><option value="50_to_69">50–69%</option><option value="70_to_79">70–79%</option><option value="80_to_89">80–89%</option><option value="90_plus">90% or above</option></select></label><button className="btn primary" disabled={busy===item.id}>{busy===item.id?'Sending…':'Send for school review'}</button></form>)}</section>:<div className="portal-empty"><FileCheck2/><h2>No funded campaign needs an update</h2><p>This workspace becomes available after the school verifies a campaign target.</p><Link className="btn" href="/guardian">Back to learner accounts</Link></div>}</PortalShell>;
+}

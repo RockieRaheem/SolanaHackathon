@@ -3,6 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Date,
     DateTime,
@@ -2014,6 +2015,35 @@ class SupportPaymentDestination(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     verified_by: Mapped[str | None] = mapped_column(String(120))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SolanaDonationIntent(Base):
+    __tablename__ = "solana_donation_intents"
+    __table_args__ = (
+        CheckConstraint("expected_lamports > 0", name="ck_solana_intents_lamports"),
+        CheckConstraint(
+            "status in ('created','confirmed','expired')", name="ck_solana_intents_status"
+        ),
+        Index("ix_solana_intents_status_expiry", "status", "expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    pledge_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("support_pledges.id", ondelete="RESTRICT"), unique=True, index=True
+    )
+    sender_address: Mapped[str | None] = mapped_column(String(64))
+    recipient_address: Mapped[str] = mapped_column(String(64))
+    expected_lamports: Mapped[int] = mapped_column(BigInteger)
+    quote_ugx_per_sol: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    memo: Mapped[str] = mapped_column(String(100), unique=True)
+    cluster: Mapped[str] = mapped_column(String(24), default="devnet")
+    status: Mapped[str] = mapped_column(String(16), default="created")
+    transaction_signature: Mapped[str | None] = mapped_column(String(128), unique=True)
+    confirmation_slot: Mapped[int | None] = mapped_column(BigInteger)
+    transaction_block_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SupportReceiptSequence(Base):

@@ -31,6 +31,8 @@ from harambeeone_api.models import (
     Person,
     School,
     SchoolMembership,
+    SettlementAnchor,
+    SolanaDonationIntent,
     Student,
     StudentFeeAssignment,
     SupportAssistantUsage,
@@ -41,6 +43,7 @@ from harambeeone_api.models import (
     SupportPledge,
     SupportReferral,
 )
+from harambeeone_api.solana_payments import VerifiedSolanaTransfer
 from harambeeone_api.support_notifications import emit_support_notification
 
 
@@ -916,7 +919,6 @@ def test_support_accepts_only_valid_institution_solana_wallets(support_workspace
     assert wrong_length.status_code == 422
 
 
-
 def test_support_notifications_are_durable_scoped_and_individually_read(
     support_workspace,
 ) -> None:
@@ -1269,3 +1271,143 @@ def test_gemma_json_parser_accepts_only_plain_or_complete_fenced_json() -> None:
         ]
     }
     assert support_assistants.gemma_response_text(response) == json.dumps(expected)
+
+
+def test_verified_solana_donation_posts_once_and_rejects_replay(
+    support_workspace, monkeypatch
+) -> None:
+    engine, _user_id, ids, client = support_workspace
+    _case_id, code = create_reviewed_campaign(client, ids)
+    recipient = "8" * 44
+    with Session(engine) as session:
+        destination = SupportPaymentDestination(
+            school_id=ids["school"],
+            channel="solana",
+            label="SomaFund devnet wallet",
+            provider_name="Solana",
+            account_name="Trust Academy",
+            account_reference=recipient,
+            instructions="Send the exact checkout transaction.",
+            verification_status="verified",
+            created_by="owner@example.com",
+            verified_by="owner@example.com",
+            verified_at=datetime.now(UTC),
+        )
+        session.add(destination)
+        session.commit()
+        destination_id = destination.id
+
+    checkout = {
+        "payment_destination_id": str(destination_id),
+        "idempotency_key": "solana-checkout-0001",
+        "donor_display_name": "Devnet donor",
+        "amount": 100000,
+    }
+    created = client.post(f"/api/v1/support/public/campaigns/{code}/solana-intents", json=checkout)
+    retried = client.post(f"/api/v1/support/public/campaigns/{code}/solana-intents", json=checkout)
+    assert created.status_code == retried.status_code == 201
+    intent_payload = created.json()
+    assert intent_payload["public_reference"] == retried.json()["public_reference"]
+    assert intent_payload["expected_lamports"] == 133333333
+    assert intent_payload["memo"].endswith(intent_payload["public_reference"])
+
+    sender, signature = "7" * 44, "3" * 88
+    monkeypatch.setattr(
+        support,
+        "verify_solana_transfer",
+        lambda **kwargs: VerifiedSolanaTransfer(
+            signature=signature,
+            sender=sender,
+            recipient=kwargs["recipient"],
+            lamports=kwargs["lamports"],
+            memo=kwargs["memo"],
+            slot=321654987,
+            block_time=datetime.now(UTC),
+        ),
+    )
+    confirmation_path = (
+        f"/api/v1/support/public/campaigns/{code}/solana-intents/"
+        f"{intent_payload['public_reference']}/confirm"
+    )
+    confirmation = {"transaction_signature": signature, "sender_address": sender}
+    confirmed = client.post(confirmation_path, json=confirmation)
+    retry = client.post(confirmation_path, json=confirmation)
+    assert confirmed.status_code == retry.status_code == 200
+    assert confirmed.json()["status"] == "verified"
+    assert confirmed.json()["confirmation_slot"] == 321654987
+    assert confirmed.json()["receipt_no"].endswith("000001")
+
+    second_checkout = checkout | {"idempotency_key": "solana-checkout-0002", "amount": 50000}
+    second = client.post(
+        f"/api/v1/support/public/campaigns/{code}/solana-intents", json=second_checkout
+    )
+    assert second.status_code == 201
+    replay_path = (
+        f"/api/v1/support/public/campaigns/{code}/solana-intents/"
+        f"{second.json()['public_reference']}/confirm"
+    )
+    replay = client.post(replay_path, json=confirmation)
+    assert replay.status_code == 409
+    assert "already used" in replay.json()["detail"]
+
+    with Session(engine) as session:
+        assert session.scalar(select(func.count(Payment.id))) == 1
+        assert session.scalar(select(func.count(PaymentAllocation.id))) == 1
+        assert session.scalar(select(func.count(SettlementAnchor.id))) == 1
+        intent = session.scalar(
+            select(SolanaDonationIntent).where(
+                SolanaDonationIntent.transaction_signature == signature
+            )
+        )
+        anchor = session.scalar(select(SettlementAnchor))
+        assert intent.status == "confirmed" and intent.confirmation_slot == 321654987
+        assert anchor.transaction_signature == signature and anchor.confirmation_slot == 321654987
+        balance = session.scalar(
+            select(func.sum(LedgerEntry.amount)).where(
+                LedgerEntry.student_id == ids["student"], LedgerEntry.period_id == ids["period"]
+            )
+        )
+        assert balance == Decimal("400000.00")
+
+
+def test_solana_intent_cannot_be_manually_posted(support_workspace) -> None:
+    engine, _user_id, ids, client = support_workspace
+    _case_id, code = create_reviewed_campaign(client, ids)
+    with Session(engine) as session:
+        destination = SupportPaymentDestination(
+            school_id=ids["school"],
+            channel="solana",
+            label="Verified devnet wallet",
+            provider_name="Solana",
+            account_name="Trust Academy",
+            account_reference="9" * 44,
+            instructions="Exact checkout only.",
+            verification_status="verified",
+            created_by="owner@example.com",
+            verified_by="owner@example.com",
+            verified_at=datetime.now(UTC),
+        )
+        session.add(destination)
+        session.commit()
+        destination_id = destination.id
+    created = client.post(
+        f"/api/v1/support/public/campaigns/{code}/solana-intents",
+        json={
+            "payment_destination_id": str(destination_id),
+            "idempotency_key": "manual-bypass-0001",
+            "amount": 100000,
+        },
+    )
+    assert created.status_code == 201
+    with Session(engine) as session:
+        pledge_id = session.scalar(
+            select(SupportPledge.id).where(
+                SupportPledge.public_reference == created.json()["public_reference"]
+            )
+        )
+    bypass = client.post(f"/api/v1/support/pledges/{pledge_id}/verify", json={"action": "verify"})
+    assert bypass.status_code == 409
+    assert "chain confirmation" in bypass.json()["detail"]
+    with Session(engine) as session:
+        assert session.scalar(select(func.count(Payment.id))) == 0
+        assert session.get(SupportPledge, pledge_id).status == "pending"

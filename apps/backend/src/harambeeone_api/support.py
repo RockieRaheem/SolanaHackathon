@@ -3,8 +3,8 @@ import binascii
 import hashlib
 import json
 import uuid
-from datetime import UTC, datetime
-from decimal import Decimal
+from datetime import UTC, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request
@@ -34,6 +34,7 @@ from harambeeone_api.models import (
     Requirement,
     School,
     SettlementAnchor,
+    SolanaDonationIntent,
     Student,
     StudentRequirement,
     SupportAiReview,
@@ -64,6 +65,11 @@ from harambeeone_api.schemas import (
     SupportReceiptReissueCreate,
     SupportReferralConsent,
     SupportReferralCreate,
+)
+from harambeeone_api.solana_payments import (
+    SolanaIntentConfirm,
+    SolanaIntentCreate,
+    verify_solana_transfer,
 )
 from harambeeone_api.support_assistants import (
     finish_assistant_usage,
@@ -515,6 +521,7 @@ def _create_pledge(
     )
     if support_case is None:
         raise HTTPException(status_code=404, detail="Open campaign not found")
+    _expire_abandoned_solana_intents(session, support_case.id)
     existing = session.scalar(
         select(SupportPledge).where(
             SupportPledge.case_id == support_case.id,
@@ -1298,6 +1305,304 @@ def get_public_campaign(public_code: str, session: Session = Depends(get_session
     if before != (support_case.target_amount, support_case.status):
         session.commit()
     return _public_payload(session, support_case, detail=True)
+
+
+def _solana_intent_payload(pledge: SupportPledge, intent: SolanaDonationIntent) -> dict:
+    return {
+        "public_reference": pledge.public_reference,
+        "status": pledge.status,
+        "amount": pledge.amount,
+        "currency": pledge.currency,
+        "recipient_address": intent.recipient_address,
+        "expected_lamports": intent.expected_lamports,
+        "quote_ugx_per_sol": intent.quote_ugx_per_sol,
+        "memo": intent.memo,
+        "cluster": intent.cluster,
+        "expires_at": intent.expires_at,
+        "transaction_signature": intent.transaction_signature,
+        "confirmation_slot": intent.confirmation_slot,
+    }
+
+
+def _expire_abandoned_solana_intents(session: Session, case_id: uuid.UUID) -> None:
+    now = datetime.now(UTC)
+    rows = session.execute(
+        select(SolanaDonationIntent, SupportPledge)
+        .join(SupportPledge, SupportPledge.id == SolanaDonationIntent.pledge_id)
+        .where(
+            SupportPledge.case_id == case_id,
+            SupportPledge.status == "pending",
+            SolanaDonationIntent.status == "created",
+            SolanaDonationIntent.expires_at < now,
+        )
+        .with_for_update()
+    ).all()
+    for intent, pledge in rows:
+        intent.status = "expired"
+        pledge.status = "rejected"
+        pledge.rejection_reason = "Solana checkout expired before confirmation"
+        session.add(
+            AuditEvent(
+                school_id=pledge.school_id,
+                entity_type="support_pledge",
+                entity_id=pledge.id,
+                action="solana_intent_expired",
+                actor="system:solana-checkout",
+                summary=f"Released expired checkout {pledge.public_reference}",
+            )
+        )
+
+
+def _create_solana_intent(
+    session: Session,
+    *,
+    public_code: str,
+    payload: SolanaIntentCreate,
+    donor_user_id: uuid.UUID | None,
+) -> tuple[SupportPledge, SolanaDonationIntent]:
+    support_case = session.scalar(
+        select(SupportCase)
+        .where(SupportCase.public_code == public_code.upper(), SupportCase.status == "published")
+        .with_for_update()
+    )
+    if support_case is None:
+        raise HTTPException(status_code=404, detail="Open campaign not found")
+    _expire_abandoned_solana_intents(session, support_case.id)
+    existing = session.scalar(
+        select(SupportPledge).where(
+            SupportPledge.case_id == support_case.id,
+            SupportPledge.idempotency_key == payload.idempotency_key.strip(),
+        )
+    )
+    try:
+        destination_id = uuid.UUID(payload.payment_destination_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="Invalid payment destination") from error
+    if existing:
+        intent = session.scalar(
+            select(SolanaDonationIntent).where(SolanaDonationIntent.pledge_id == existing.id)
+        )
+        if (
+            intent is None
+            or existing.amount != Decimal(payload.amount)
+            or existing.payment_destination_id != destination_id
+            or existing.donor_auth_user_id != donor_user_id
+        ):
+            raise HTTPException(status_code=409, detail="This checkout key was already used")
+        return existing, intent
+    destination = session.scalar(
+        select(SupportPaymentDestination).where(
+            SupportPaymentDestination.id == destination_id,
+            SupportPaymentDestination.school_id == support_case.school_id,
+            SupportPaymentDestination.verification_status == "verified",
+            SupportPaymentDestination.channel == "solana",
+        )
+    )
+    if destination is None:
+        raise HTTPException(status_code=422, detail="Choose a verified school Solana wallet")
+    _refresh_case_target(session, support_case, "system:solana-checkout")
+    if support_case.status != "published":
+        session.commit()
+        raise HTTPException(status_code=409, detail="This campaign is no longer accepting support")
+    amount = Decimal(payload.amount)
+    reserved = _money_total(session, support_case.id, "pending", "verified")
+    available = max(support_case.target_amount - reserved, Decimal("0"))
+    if amount > available:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"Contribution exceeds the remaining campaign amount of UGX {available:,.0f}"),
+        )
+    settings = get_settings()
+    expected_lamports = int(
+        ((amount / settings.solana_ugx_per_sol) * Decimal(1_000_000_000)).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+    )
+    pledge = SupportPledge(
+        case_id=support_case.id,
+        school_id=support_case.school_id,
+        payment_destination_id=destination.id,
+        donor_auth_user_id=donor_user_id,
+        idempotency_key=payload.idempotency_key.strip(),
+        public_reference=f"HSP-{uuid.uuid4().hex[:16].upper()}",
+        external_reference=f"SOL-INTENT-{uuid.uuid4().hex.upper()}",
+        donor_display_name=(payload.donor_display_name or "").strip() or None,
+        amount=amount,
+        currency=support_case.currency,
+    )
+    session.add(pledge)
+    session.flush()
+    now = datetime.now(UTC)
+    intent = SolanaDonationIntent(
+        pledge_id=pledge.id,
+        recipient_address=destination.account_reference,
+        expected_lamports=expected_lamports,
+        quote_ugx_per_sol=settings.solana_ugx_per_sol,
+        memo=f"HARAMBEEONE:{pledge.public_reference}",
+        cluster=settings.solana_cluster,
+        expires_at=now + timedelta(minutes=settings.solana_intent_ttl_minutes),
+    )
+    session.add(intent)
+    session.add(
+        AuditEvent(
+            school_id=support_case.school_id,
+            entity_type="support_pledge",
+            entity_id=pledge.id,
+            action="solana_intent_created",
+            actor=(str(donor_user_id) if donor_user_id else "public:donor"),
+            summary=f"Created exact Solana checkout for {pledge.public_reference}",
+        )
+    )
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail="This Solana checkout already exists"
+        ) from error
+    return pledge, intent
+
+
+def _confirm_solana_intent(
+    session: Session,
+    *,
+    public_code: str,
+    public_reference: str,
+    payload: SolanaIntentConfirm,
+) -> dict:
+    support_case = session.scalar(
+        select(SupportCase).where(SupportCase.public_code == public_code.upper())
+    )
+    if support_case is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    pledge = session.scalar(
+        select(SupportPledge)
+        .where(
+            SupportPledge.case_id == support_case.id,
+            SupportPledge.public_reference == public_reference.upper(),
+        )
+        .with_for_update()
+    )
+    if pledge is None:
+        raise HTTPException(status_code=404, detail="Solana checkout not found")
+    intent = session.scalar(
+        select(SolanaDonationIntent)
+        .where(SolanaDonationIntent.pledge_id == pledge.id)
+        .with_for_update()
+    )
+    if intent is None:
+        raise HTTPException(status_code=404, detail="Solana checkout not found")
+    if intent.status == "confirmed":
+        if intent.transaction_signature != payload.transaction_signature:
+            raise HTTPException(status_code=409, detail="This checkout is already confirmed")
+        payment = session.get(Payment, pledge.payment_id) if pledge.payment_id else None
+        result = _solana_intent_payload(pledge, intent)
+        result["receipt_no"] = payment.receipt_no if payment else None
+        return result
+    now = datetime.now(UTC)
+    expires_at = (
+        intent.expires_at if intent.expires_at.tzinfo else intent.expires_at.replace(tzinfo=UTC)
+    )
+    if now > expires_at:
+        intent.status = "expired"
+        pledge.status = "rejected"
+        pledge.rejection_reason = "Solana checkout expired before confirmation"
+        session.add(
+            AuditEvent(
+                school_id=pledge.school_id,
+                entity_type="support_pledge",
+                entity_id=pledge.id,
+                action="solana_intent_expired",
+                actor="system:solana-checkout",
+                summary=f"Released expired checkout {pledge.public_reference}",
+            )
+        )
+        session.commit()
+        raise HTTPException(status_code=410, detail="This checkout expired; create a new one")
+    replay = session.scalar(
+        select(SolanaDonationIntent.id).where(
+            SolanaDonationIntent.transaction_signature == payload.transaction_signature,
+            SolanaDonationIntent.id != intent.id,
+        )
+    )
+    if replay:
+        raise HTTPException(status_code=409, detail="This transaction was already used")
+    proof = verify_solana_transfer(
+        signature=payload.transaction_signature,
+        sender=payload.sender_address,
+        recipient=intent.recipient_address,
+        lamports=intent.expected_lamports,
+        memo=intent.memo,
+    )
+    created_at = (
+        intent.created_at if intent.created_at.tzinfo else intent.created_at.replace(tzinfo=UTC)
+    )
+    if proof.block_time < created_at - timedelta(minutes=5) or proof.block_time > expires_at:
+        raise HTTPException(
+            status_code=422, detail="Transaction time is outside this checkout window"
+        )
+    intent.sender_address = proof.sender
+    intent.transaction_signature = proof.signature
+    intent.confirmation_slot = proof.slot
+    intent.transaction_block_time = proof.block_time
+    intent.confirmed_at = now
+    intent.status = "confirmed"
+    pledge.external_reference = proof.signature
+    system_context = SchoolContext(
+        user=AuthenticatedUser(id=uuid.UUID(int=0), email=f"solana:{proof.sender}"),
+        school_id=pledge.school_id,
+        role="owner",
+    )
+    result = verify_support_pledge(
+        pledge.id, SupportPledgeVerify(action="verify"), session, system_context
+    )
+    result.update(
+        {
+            "transaction_signature": proof.signature,
+            "confirmation_slot": proof.slot,
+            "cluster": intent.cluster,
+        }
+    )
+    return result
+
+
+@router.post("/public/campaigns/{public_code}/solana-intents", status_code=status.HTTP_201_CREATED)
+def create_public_solana_intent(
+    public_code: str,
+    payload: SolanaIntentCreate,
+    session: Session = Depends(get_session),
+):
+    pledge, intent = _create_solana_intent(
+        session, public_code=public_code, payload=payload, donor_user_id=None
+    )
+    return _solana_intent_payload(pledge, intent)
+
+
+@router.post("/donor/campaigns/{public_code}/solana-intents", status_code=status.HTTP_201_CREATED)
+def create_donor_solana_intent(
+    public_code: str,
+    payload: SolanaIntentCreate,
+    user: AuthenticatedUser = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if session.get(DonorProfile, user.id) is None:
+        raise HTTPException(status_code=403, detail="Activate your donor workspace first")
+    pledge, intent = _create_solana_intent(
+        session, public_code=public_code, payload=payload, donor_user_id=user.id
+    )
+    return _solana_intent_payload(pledge, intent)
+
+
+@router.post("/public/campaigns/{public_code}/solana-intents/{public_reference}/confirm")
+def confirm_public_solana_intent(
+    public_code: str,
+    public_reference: str,
+    payload: SolanaIntentConfirm,
+    session: Session = Depends(get_session),
+):
+    return _confirm_solana_intent(
+        session, public_code=public_code, public_reference=public_reference, payload=payload
+    )
 
 
 @router.post("/public/campaigns/{public_code}/pledges", status_code=status.HTTP_201_CREATED)
@@ -2236,6 +2541,16 @@ def verify_support_pledge(
             status_code=409,
             detail="The school payment destination is no longer verified",
         )
+    solana_intent = None
+    if destination.channel == "solana":
+        solana_intent = session.scalar(
+            select(SolanaDonationIntent).where(SolanaDonationIntent.pledge_id == pledge.id)
+        )
+        if solana_intent is None or solana_intent.status != "confirmed":
+            raise HTTPException(
+                status_code=409,
+                detail="Solana contributions require server-side chain confirmation",
+            )
     payment_id = uuid.uuid4()
     financial_reference = (
         "HSP-"
@@ -2287,8 +2602,9 @@ def verify_support_pledge(
         network="solana-devnet" if destination.channel == "solana" else "offchain",
         status="confirmed" if destination.channel == "solana" else "pending",
         transaction_signature=(
-            pledge.external_reference if destination.channel == "solana" else None
+            solana_intent.transaction_signature if solana_intent is not None else None
         ),
+        confirmation_slot=(solana_intent.confirmation_slot if solana_intent is not None else None),
     )
     pledge.status = "verified"
     pledge.payment_id = payment.id

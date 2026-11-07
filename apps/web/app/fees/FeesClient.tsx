@@ -146,7 +146,11 @@ export default function FeesClient() {
         throw new Error(detail||'Fee plan could not be saved.');
       }
       setPlanOpen(false);setPlanScope('general');setTargetType('cohort');setPlanError('');
-      await reload(isGeneral?'General class fee saved as a draft. Publish the preview to activate automatic assignment.':'Draft fee plan created. Review the billing preview before publishing.');
+      const successMessage=isGeneral?'General class fee saved as a draft. Publish the preview to activate automatic assignment.':'Draft fee plan created. Review the billing preview before publishing.';
+      try{await reload(successMessage)}catch{
+        setNotice(successMessage);
+        setError('The fee plan was saved, but the billing workspace could not refresh. Reload the page to see the latest figures.');
+      }
     }catch(reason){
       setPlanError(reason instanceof Error?reason.message:'Fee plan could not be saved.');
       formElement.scrollTo({top:0,behavior:'smooth'});

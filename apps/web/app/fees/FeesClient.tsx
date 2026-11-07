@@ -30,7 +30,7 @@ export default function FeesClient() {
   const [categoryOpen,setCategoryOpen]=useState(false),[planOpen,setPlanOpen]=useState(false),[adjustmentOpen,setAdjustmentOpen]=useState(false);
   const [planScope,setPlanScope]=useState<'general'|'targeted'>('general'),[adjustmentMode,setAdjustmentMode]=useState<'adjustment'|'scholarship'>('adjustment');
   const [targetType,setTargetType]=useState<'cohort'|'selected'>('cohort'),[classId,setClassId]=useState(''),[installments,setInstallments]=useState<Installment[]>([{...blankInstallment(1),name:'Full term',percentage:'100'}]);
-  const [error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true);
+  const [error,setError]=useState(''),[planError,setPlanError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true);
   const [statusFilter,setStatusFilter]=useState('all');
 
   const load = useCallback(async (currentSchool:string,currentPeriod:string) => {
@@ -56,11 +56,102 @@ export default function FeesClient() {
   const classStudents=students.filter(student=>student.class_name===selectedGroup?.name);
   const classRequirements=requirements.filter(item=>item.classes.some(group=>group.id===classId));
   const generalPlan=plans.find(plan=>plan.class_id===classId&&plan.is_general&&plan.status==='published')??plans.find(plan=>plan.class_id===classId&&plan.is_general);
-  const openPlan=()=>{if(!classId)return;setPlanScope(generalPlan?'targeted':'general');setTargetType('cohort');setInstallments([{...blankInstallment(1),name:'Full term',percentage:'100',due_date:period?.due_date??''}]);setPlanOpen(true)};
+  const openPlan=()=>{if(!classId)return;setPlanError('');setPlanScope(generalPlan?'targeted':'general');setTargetType('cohort');setInstallments([{...blankInstallment(1),name:'Full term',percentage:'100',due_date:period?.due_date??''}]);setPlanOpen(true)};
 
   async function addCategory(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!school)return;setBusy(true);setError('');const form=new FormData(event.currentTarget);const name=String(form.get('name')||'').trim();const code=(name.replace(/[^A-Za-z0-9]/g,'').slice(0,10)||'FEE').toUpperCase();try{const response=await fetch(`${API}/api/v1/fee-categories`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({school_id:school.id,name,code,category_type:form.get('type'),is_required:true,is_recurring:true,priority:categories.length+1})});const body=await response.json();if(!response.ok)throw new Error(body.detail??'Category could not be saved.');setCategoryOpen(false);await reload('Fee category created.')}catch(reason){setError(reason instanceof Error?reason.message:'Category could not be saved.')}finally{setBusy(false)}}
 
-  async function addPlan(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!school||!period||!selectedGroup)return;setBusy(true);setError('');const form=new FormData(event.currentTarget);const isGeneral=planScope==='general';const items=categories.map(category=>({category_id:category.id,amount:Number(form.get(`category-${category.id}`)||0)})).filter(item=>item.amount>0);const rules=installments.map((item,index)=>({name:item.name,calculation_type:item.calculation_type,amount:item.calculation_type==='fixed'?Number(item.amount):null,percentage:item.calculation_type==='percentage'?Number(item.percentage):null,due_date:item.due_date,sort_order:index+1}));try{const response=await fetch(`${API}/api/v1/fee-plans`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({school_id:school.id,period_id:period.id,class_id:classId,stream_id:isGeneral?null:form.get('stream_id')||null,name:isGeneral?`${selectedGroup.name} general fees · ${period.name}`:String(form.get('name')||`${selectedGroup.name} targeted fee`),academic_year:period.academic_year,term:period.sequence,currency:'UGX',target_type:isGeneral?'cohort':targetType,boarding_status:isGeneral?null:form.get('boarding_status')||null,student_ids:!isGeneral&&targetType==='selected'?form.getAll('student_ids'):[],items,installments:rules})});const body=await response.json();if(!response.ok){const detail=Array.isArray(body.detail)?body.detail.map((item:{msg:string})=>item.msg).join(', '):body.detail;throw new Error(detail||'Fee plan could not be saved.')}setPlanOpen(false);setPlanScope('general');setTargetType('cohort');await reload(isGeneral?'General class fee saved as a draft. Publish the preview to activate automatic assignment.':'Draft fee plan created. Review the billing preview before publishing.')}catch(reason){setError(reason instanceof Error?reason.message:'Fee plan could not be saved.')}finally{setBusy(false)}}
+  async function addPlan(event:FormEvent<HTMLFormElement>){
+    event.preventDefault();
+    if(!school||!period||!selectedGroup)return;
+    const formElement=event.currentTarget;
+    const form=new FormData(formElement);
+    const isGeneral=planScope==='general';
+    setError('');setPlanError('');
+
+    const items=categories.map(category=>{
+      const raw=String(form.get(`category-${category.id}`)||'').trim();
+      const amount=Number(raw);
+      return {category_id:category.id,amount,raw};
+    }).filter(item=>item.raw!=='');
+    if(!items.length){
+      setPlanError('Enter an amount greater than zero for at least one fee category.');
+      formElement.scrollTo({top:0,behavior:'smooth'});
+      return;
+    }
+    if(items.some(item=>!Number.isFinite(item.amount)||item.amount<=0||!Number.isSafeInteger(Math.round(item.amount*100)))){
+      setPlanError('Every entered category amount must be a valid positive UGX amount with no more than two decimal places.');
+      formElement.scrollTo({top:0,behavior:'smooth'});
+      return;
+    }
+    const totalCents=items.reduce((sum,item)=>sum+Math.round(item.amount*100),0);
+    const rules=installments.map((item,index)=>({
+      name:item.name.trim(),calculation_type:item.calculation_type,
+      amount:item.calculation_type==='fixed'?Number(item.amount):null,
+      percentage:item.calculation_type==='percentage'?Number(item.percentage):null,
+      due_date:item.due_date,sort_order:index+1,
+    }));
+    if(rules.some(item=>!item.name||!item.due_date)){
+      setPlanError('Give every installment a name and due date.');
+      formElement.scrollTo({top:0,behavior:'smooth'});
+      return;
+    }
+    const invalidRule=rules.some(item=>{
+      const value=item.calculation_type==='fixed'?item.amount:item.percentage;
+      return value===null||!Number.isFinite(value)||value<=0;
+    });
+    if(invalidRule){
+      setPlanError('Every installment amount or percentage must be greater than zero.');
+      formElement.scrollTo({top:0,behavior:'smooth'});
+      return;
+    }
+    const installmentCents=rules.reduce((sum,item)=>sum+(
+      item.calculation_type==='fixed'
+        ?Math.round((item.amount??0)*100)
+        :Math.round(totalCents*(item.percentage??0)/100)
+    ),0);
+    if(installmentCents!==totalCents){
+      setPlanError(`The installment schedule must equal ${money(totalCents/100)}. It currently equals ${money(installmentCents/100)}.`);
+      formElement.scrollTo({top:0,behavior:'smooth'});
+      return;
+    }
+    if(!isGeneral&&targetType==='selected'&&!form.getAll('student_ids').length){
+      setPlanError('Select at least one learner for this targeted fee.');
+      formElement.scrollTo({top:0,behavior:'smooth'});
+      return;
+    }
+
+    setBusy(true);
+    try{
+      const response=await fetch(`${API}/api/v1/fee-plans`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          school_id:school.id,period_id:period.id,class_id:classId,
+          stream_id:isGeneral?null:form.get('stream_id')||null,
+          name:isGeneral?`${selectedGroup.name} general fees · ${period.name}`:String(form.get('name')||`${selectedGroup.name} targeted fee`),
+          academic_year:period.academic_year,term:period.sequence,currency:'UGX',
+          target_type:isGeneral?'cohort':targetType,
+          boarding_status:isGeneral?null:form.get('boarding_status')||null,
+          student_ids:!isGeneral&&targetType==='selected'?form.getAll('student_ids'):[],
+          items:items.map(({category_id,amount})=>({category_id,amount})),installments:rules,
+        }),
+      });
+      const body=await response.json().catch(()=>({}));
+      if(!response.ok){
+        const detail=Array.isArray(body.detail)
+          ?body.detail.map((item:{loc?:Array<string|number>;msg?:string})=>{
+            const field=(item.loc||[]).filter(value=>value!=='body').join(' › ');
+            return `${field?field+': ':''}${item.msg||'Invalid value'}`;
+          }).join(' · ')
+          :body.detail;
+        throw new Error(detail||'Fee plan could not be saved.');
+      }
+      setPlanOpen(false);setPlanScope('general');setTargetType('cohort');setPlanError('');
+      await reload(isGeneral?'General class fee saved as a draft. Publish the preview to activate automatic assignment.':'Draft fee plan created. Review the billing preview before publishing.');
+    }catch(reason){
+      setPlanError(reason instanceof Error?reason.message:'Fee plan could not be saved.');
+      formElement.scrollTo({top:0,behavior:'smooth'});
+    }finally{setBusy(false)}
+  }
 
   async function addAdjustment(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!school||!period)return;setBusy(true);setError('');const form=new FormData(event.currentTarget);try{const response=await fetch(`${API}/api/v1/billing/adjustments`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({school_id:school.id,period_id:period.id,student_id:form.get('student_id'),category_id:form.get('category_id')||null,adjustment_type:adjustmentMode==='scholarship'?'sponsorship_credit':form.get('adjustment_type'),amount:Number(form.get('amount')),description:form.get('description'),reason:form.get('reason')})});const body=await response.json();if(!response.ok){const detail=Array.isArray(body.detail)?body.detail[0]?.msg:body.detail;throw new Error(detail||'Adjustment could not be saved.')}setAdjustmentOpen(false);await reload(adjustmentMode==='scholarship'?'Scholarship added to the controlled billing preview.':'Learner adjustment added to the draft preview.')}catch(reason){setError(reason instanceof Error?reason.message:'Adjustment could not be saved.')}finally{setBusy(false)}}
 
@@ -112,9 +203,9 @@ export default function FeesClient() {
     </details>
     {categoryOpen&&<div className="modal-backdrop"><section className="modal"><header><div><h2>Add fee category</h2><p>Create a reusable line such as tuition, meals or transport. The system creates the accounting code and order.</p></div><button onClick={()=>setCategoryOpen(false)}><X size={20}/></button></header><form className="modal-form" onSubmit={addCategory}><label>Category name<input name="name" required autoFocus placeholder="Tuition"/></label><label>Category type<select name="type"><option value="tuition">Tuition</option><option value="boarding">Boarding</option><option value="transport">Transport</option><option value="meals">Meals</option><option value="uniform">Uniform</option><option value="other">Other</option></select></label><footer><button type="button" className="btn" onClick={()=>setCategoryOpen(false)}>Cancel</button><button className="btn primary" disabled={busy}>{busy?'Saving…':'Save category'}</button></footer></form></section></div>}
 
-    {planOpen&&<div className="modal-backdrop"><section className="modal registration-modal"><header><div><h2>Configure {selectedGroup?.name}</h2><p>Start with one whole-class fee. Add targeted exceptions only when a stream, residence group or named learner genuinely differs.</p></div><button onClick={()=>setPlanOpen(false)}><X size={20}/></button></header><form className="modal-form" onSubmit={addPlan}><div className="form-section"><div className="class-form-context"><span>Class</span><strong>{selectedGroup?.name}</strong><small>{classStudents.length} active learner{classStudents.length===1?'':'s'} · {period?.name}</small></div><div className="form-grid"><label>Fee coverage<select value={planScope} onChange={event=>setPlanScope(event.target.value as 'general'|'targeted')}><option value="general" disabled={Boolean(generalPlan)}>General fee for the whole class</option><option value="targeted">Special targeted fee</option></select></label>{planScope==='targeted'&&<><label>Fee name<input name="name" required placeholder="Boarding supplement"/></label><label>Target mode<select value={targetType} onChange={event=>setTargetType(event.target.value as 'cohort'|'selected')}><option value="cohort">Every matching learner</option><option value="selected">Selected learners only</option></select></label><label>Stream<select name="stream_id" disabled={!selectedGroup?.streams.length}><option value="">All streams</option>{selectedGroup?.streams.map(stream=><option key={stream.id} value={stream.id}>{stream.name}</option>)}</select></label><label>Residence<select name="boarding_status"><option value="">All residence types</option><option value="day">Day</option><option value="boarding">Boarding</option><option value="half_boarding">Half boarding</option></select></label></>}</div>{planScope==='general'&&<p className="form-help">This becomes the single automatic fee for every current and future learner placed in this class during the term.</p>}{planScope==='targeted'&&targetType==='selected'&&<div className="class-choice-grid learner-choice-grid">{classStudents.map(student=><label key={student.id}><input type="checkbox" name="student_ids" value={student.id}/><span><strong>{student.full_name}</strong><small>{student.admission_no} · {student.stream_name??'No stream'}</small></span></label>)}{!classStudents.length&&<p className="form-help">No active learners are placed in this class for the selected period.</p>}</div>}</div>
-      <div className="form-section"><h3>Category amounts</h3><div className="form-grid">{categories.map(category=><label key={category.id}>{category.name}<input name={`category-${category.id}`} type="number" min="0" step="0.01" defaultValue="0"/></label>)}</div></div>
-      <div className="form-section"><div className="form-section-title"><div><h3>Installment schedule</h3><p className="form-help">Use any number of fixed amounts or percentages. The combined schedule must equal the plan total.</p></div><button type="button" className="text-button" onClick={()=>setInstallments(rows=>[...rows,blankInstallment(rows.length+1)])}>+ Add installment</button></div>{installments.map((item,index)=><div className="installment-row" key={index}><label>Name<input required value={item.name} onChange={event=>updateInstallment(index,'name',event.target.value)}/></label><label>Calculation<select value={item.calculation_type} onChange={event=>updateInstallment(index,'calculation_type',event.target.value)}><option value="percentage">Percentage</option><option value="fixed">Fixed amount</option></select></label><label>{item.calculation_type==='percentage'?'Percentage':'Amount (UGX)'}<input required type="number" min="0.01" step="0.01" value={item.calculation_type==='percentage'?item.percentage:item.amount} onChange={event=>updateInstallment(index,item.calculation_type==='percentage'?'percentage':'amount',event.target.value)}/></label><label>Due date<input required type="date" value={item.due_date} onChange={event=>updateInstallment(index,'due_date',event.target.value)}/></label>{installments.length>1&&<button type="button" className="remove-guardian" onClick={()=>setInstallments(rows=>rows.filter((_,rowIndex)=>rowIndex!==index))}>Remove</button>}</div>)}</div><footer><button type="button" className="btn" onClick={()=>setPlanOpen(false)}>Cancel</button><button className="btn primary" disabled={busy}>{busy?'Saving…':'Save draft plan'}</button></footer></form></section></div>}
+    {planOpen&&<div className="modal-backdrop"><section className="modal registration-modal fee-plan-modal" role="dialog" aria-modal="true" aria-labelledby="fee-plan-title"><header><div><h2 id="fee-plan-title">Configure {selectedGroup?.name}</h2><p>Start with one whole-class fee. Add targeted exceptions only when a stream, residence group or named learner genuinely differs.</p></div><button onClick={()=>setPlanOpen(false)}><X size={20}/></button></header><form className="modal-form" onSubmit={addPlan}>{planError&&<div className="form-error" role="alert"><strong>Fee plan was not saved</strong><span>{planError}</span></div>}<div className="form-section"><div className="class-form-context"><span>Class</span><strong>{selectedGroup?.name}</strong><small>{classStudents.length} active learner{classStudents.length===1?'':'s'} · {period?.name}</small></div><div className="form-grid"><label>Fee coverage<select value={planScope} onChange={event=>setPlanScope(event.target.value as 'general'|'targeted')}><option value="general" disabled={Boolean(generalPlan)}>General fee for the whole class</option><option value="targeted">Special targeted fee</option></select></label>{planScope==='targeted'&&<><label>Fee name<input name="name" required placeholder="Boarding supplement"/></label><label>Target mode<select value={targetType} onChange={event=>setTargetType(event.target.value as 'cohort'|'selected')}><option value="cohort">Every matching learner</option><option value="selected">Selected learners only</option></select></label><label>Stream<select name="stream_id" disabled={!selectedGroup?.streams.length}><option value="">All streams</option>{selectedGroup?.streams.map(stream=><option key={stream.id} value={stream.id}>{stream.name}</option>)}</select></label><label>Residence<select name="boarding_status"><option value="">All residence types</option><option value="day">Day</option><option value="boarding">Boarding</option><option value="half_boarding">Half boarding</option></select></label></>}</div>{planScope==='general'&&<p className="form-help">This becomes the single automatic fee for every current and future learner placed in this class during the term.</p>}{planScope==='targeted'&&targetType==='selected'&&<div className="class-choice-grid learner-choice-grid">{classStudents.map(student=><label key={student.id}><input type="checkbox" name="student_ids" value={student.id}/><span><strong>{student.full_name}</strong><small>{student.admission_no} · {student.stream_name??'No stream'}</small></span></label>)}{!classStudents.length&&<p className="form-help">No active learners are placed in this class for the selected period.</p>}</div>}</div>
+      <div className="form-section"><h3>Category amounts</h3><p className="form-help">Enter an amount greater than zero for at least one category. Leave categories that do not apply blank.</p><div className="form-grid">{categories.map(category=><label key={category.id}>{category.name}<input name={`category-${category.id}`} type="number" min="0.01" step="0.01" placeholder="Enter amount"/></label>)}</div></div>
+      <div className="form-section"><div className="form-section-title"><div><h3>Installment schedule</h3><p className="form-help">Use any number of fixed amounts or percentages. The combined schedule must equal the plan total.</p></div><button type="button" className="text-button" onClick={()=>setInstallments(rows=>[...rows,blankInstallment(rows.length+1)])}>+ Add installment</button></div>{installments.map((item,index)=><div className="installment-row" key={index}><label>Name<input required value={item.name} onChange={event=>updateInstallment(index,'name',event.target.value)}/></label><label>Calculation<select value={item.calculation_type} onChange={event=>updateInstallment(index,'calculation_type',event.target.value)}><option value="percentage">Percentage</option><option value="fixed">Fixed amount</option></select></label><label>{item.calculation_type==='percentage'?'Percentage':'Amount (UGX)'}<input required type="number" min="0.01" step="0.01" value={item.calculation_type==='percentage'?item.percentage:item.amount} onChange={event=>updateInstallment(index,item.calculation_type==='percentage'?'percentage':'amount',event.target.value)}/></label><label>Due date<input required type="date" value={item.due_date} onChange={event=>updateInstallment(index,'due_date',event.target.value)}/></label>{installments.length>1&&<button type="button" className="remove-guardian" onClick={()=>setInstallments(rows=>rows.filter((_,rowIndex)=>rowIndex!==index))}>Remove</button>}</div>)}</div><footer><button type="button" className="btn" onClick={()=>{setPlanError('');setPlanOpen(false)}}>Cancel</button><button className="btn primary" disabled={busy}>{busy?'Saving…':'Save draft plan'}</button></footer></form></section></div>}
 
     {adjustmentOpen&&<div className="modal-backdrop"><section className="modal"><header><div><h2>{adjustmentMode==='scholarship'?'Apply scholarship':'Add learner adjustment'}</h2><p>{adjustmentMode==='scholarship'?'Record an approved bursary or scholarship against a learner who already has a posted fee.':'Additions increase a bill; discounts and waivers reduce it.'}</p></div><button onClick={()=>setAdjustmentOpen(false)}><X size={20}/></button></header><form className="modal-form" onSubmit={addAdjustment}><label>Learner<select name="student_id" required><option value="">Select learner</option>{students.map(student=><option key={student.id} value={student.id}>{student.full_name} · {student.admission_no}</option>)}</select></label>{adjustmentMode==='adjustment'&&<label>Adjustment<select name="adjustment_type"><option value="addition">Learner-specific addition</option><option value="discount">Discount</option><option value="waiver">Waiver</option></select></label>}<label>Category<select name="category_id"><option value="">No category</option>{categories.map(category=><option key={category.id} value={category.id}>{category.name}</option>)}</select></label><label>Amount (UGX)<input name="amount" type="number" min="1" step="0.01" required/></label><label>Description<input name="description" required placeholder={adjustmentMode==='scholarship'?'Full-term merit scholarship':'Sibling discount'}/></label><label>{adjustmentMode==='scholarship'?'Approval details':'Reason'}<textarea name="reason" required placeholder={adjustmentMode==='scholarship'?'Scholarship provider, approval reference and conditions':'Approval or policy reason'}/></label>{adjustmentMode==='scholarship'&&<p className="form-help">The scholarship cannot exceed the learner's current balance and becomes an immutable credit only when this billing preview is published.</p>}<footer><button type="button" className="btn" onClick={()=>setAdjustmentOpen(false)}>Cancel</button><button className="btn primary" disabled={busy}>{adjustmentMode==='scholarship'?'Add scholarship to preview':'Add to preview'}</button></footer></form></section></div>}
   </>;

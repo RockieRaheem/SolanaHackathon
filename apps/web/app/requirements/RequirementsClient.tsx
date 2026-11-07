@@ -2,16 +2,14 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
-  Boxes,
-  CheckCircle2,
   ClipboardCheck,
   PackageCheck,
   Plus,
-  Shirt,
   X,
 } from 'lucide-react';
-import { FilterSearch, MetricCard, PageHeader, RegisterFilters, SectionHeader, Status } from '@/components/ui';
+import { FilterSearch, PageHeader, RegisterFilters, SectionHeader, Status } from '@/components/ui';
 import { getPrimarySchool, type School } from '@/lib/school';
 import { AcademicPeriod, getSelectedPeriod } from '@/lib/period';
 import { clientFetch as fetch } from '@/lib/api/client';
@@ -72,6 +70,7 @@ function statusTone(value: string): 'success' | 'warning' | 'danger' | 'info' {
 }
 
 export default function RequirementsClient() {
+  const searchParams = useSearchParams();
   const [school, setSchool] = useState<School | null>(null);
   const [period, setPeriod] = useState<AcademicPeriod | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -87,7 +86,7 @@ export default function RequirementsClient() {
   const [filter, setFilter] = useState('all');
   const [catalogueSearch, setCatalogueSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [classFilter, setClassFilter] = useState('all');
+  const [selectedClassId, setSelectedClassId] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -119,12 +118,17 @@ export default function RequirementsClient() {
         setPeriod(selected);
         const [classResponse,studentResponse] = await Promise.all([fetch(`${API}/api/v1/schools/${item.id}/classes`),fetch(`${API}/api/v1/students?school_id=${item.id}&period_id=${selected.id}`)]);
         if (!classResponse.ok||!studentResponse.ok) throw new Error();
-        setGroups(await classResponse.json());
+        const classRows: Group[] = await classResponse.json();
+        setGroups(classRows);
+        const requestedClass = searchParams.get('class');
+        const initialClass = classRows.some(group => group.id === requestedClass) ? requestedClass! : classRows[0]?.id ?? '';
+        setSelectedClassId(initialClass);
+        if (searchParams.get('create') === '1' && initialClass) setCreateOpen(true);
         setStudents((await studentResponse.json()).items);
         await loadRequirements(item.id, selected.id);
       })
       .catch(() => setError('Requirements service is unavailable.'));
-  }, [loadRequirements]);
+  }, [loadRequirements, searchParams]);
 
   useEffect(() => {
     if (school && period && selectedId) {
@@ -134,17 +138,23 @@ export default function RequirementsClient() {
     }
   }, [loadAssignments, period, school, selectedId]);
 
+  const selectedGroup = groups.find(group => group.id === selectedClassId) ?? null;
+  const classStudents = students.filter(student => student.class_name === selectedGroup?.name);
   const selected = requirements.find(item => item.id === selectedId) ?? null;
   const filteredRequirements = useMemo(() => {
     const term = catalogueSearch.trim().toLowerCase();
     return requirements.filter(item => {
-      const matchesSearch = !term || `${item.name} ${item.code} ${item.description ?? ''} ${item.classes.map(value => value.name).join(' ')}`.toLowerCase().includes(term);
+      const matchesSearch = !term || (item.name+' '+item.code+' '+(item.description ?? '')).toLowerCase().includes(term);
       const matchesType = typeFilter === 'all' || item.requirement_type === typeFilter;
-      const matchesClass = classFilter === 'all' || item.classes.some(value => value.id === classFilter);
+      const matchesClass = item.classes.some(value => value.id === selectedClassId);
       return matchesSearch && matchesType && matchesClass;
     });
-  }, [catalogueSearch, classFilter, requirements, typeFilter]);
-  const catalogueFiltersActive = Boolean(catalogueSearch || typeFilter !== 'all' || classFilter !== 'all');
+  }, [catalogueSearch, requirements, selectedClassId, typeFilter]);
+  const catalogueFiltersActive = Boolean(catalogueSearch || typeFilter !== 'all');
+  useEffect(() => {
+    const classRows = requirements.filter(item => item.classes.some(value => value.id === selectedClassId));
+    setSelectedId(current => classRows.some(item => item.id === current) ? current : classRows[0]?.id ?? '');
+  }, [requirements, selectedClassId]);
   const filteredAssignments = useMemo(() => {
     const term = search.trim().toLowerCase();
     return assignments.filter(item => {
@@ -157,15 +167,17 @@ export default function RequirementsClient() {
 
   async function createRequirement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!school || !period) return;
+    if (!school || !period || !selectedGroup) return;
     setSaving(true);
     setError('');
     const form = new FormData(event.currentTarget);
+    const name = String(form.get('name') || '').trim();
+    const code = [selectedGroup.canonical_code || selectedGroup.name, name, 'T'+period.sequence].join('-').replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().slice(0, 20);
     const payload = {
       school_id: school.id,
       period_id: period.id,
-      name: form.get('name'),
-      code: form.get('code'),
+      name,
+      code,
       requirement_type: form.get('requirement_type'),
       description: form.get('description') || null,
       academic_year: period.academic_year,
@@ -174,10 +186,10 @@ export default function RequirementsClient() {
         ? Number(form.get('amount'))
         : 0,
       quantity: Number(form.get('quantity')),
-      unit: form.get('unit'),
+      unit: form.get('unit') || (requirementType === 'document' ? 'document' : 'item'),
       due_date: form.get('due_date') || null,
       is_mandatory: form.get('is_mandatory') === 'on',
-      class_ids: form.getAll('class_ids'),
+      class_ids: [selectedClassId],
       stream_id: form.get('stream_id') || null,
       boarding_status: form.get('boarding_status') || null,
       student_ids: targetMode === 'selected' ? form.getAll('student_ids') : [],
@@ -239,49 +251,47 @@ export default function RequirementsClient() {
     if (school && period) await loadRequirements(school.id, period.id);
   }
 
-  const totalAssignments = requirements.reduce((sum, item) => sum + item.assigned_count, 0);
-  const totalComplete = requirements.reduce((sum, item) => sum + item.completed_count, 0);
-  const totalPaid = requirements.reduce((sum, item) => sum + Number(item.paid_amount), 0);
-
+  const classRequirements = requirements.filter(item => item.classes.some(value => value.id === selectedClassId));
+  const totalAssignments = classRequirements.reduce((sum, item) => sum + item.assigned_count, 0);
+  const totalComplete = classRequirements.reduce((sum, item) => sum + item.completed_count, 0);
   return <>
     <PageHeader
-      eyebrow="Bursar · Learner obligations"
-      title="Requirements register"
-      description="Assign class-specific services, school-issued goods, brought items and documents—and track payment and handover separately."
-      actions={<button className="btn primary" disabled={!groups.length} onClick={() => setCreateOpen(true)}><Plus size={16}/>Create requirement</button>}
+      eyebrow="Bursar · Class obligations"
+      title="Requirements"
+      description="Choose a class, add the items or services its learners need, then publish them with the class fee."
+      actions={<button className="btn primary" disabled={!selectedClassId} onClick={() => setCreateOpen(true)}><Plus size={16}/>Add to {selectedGroup?.name??'class'}</button>}
     />
     {error && <div className="form-error page-error">{error}<button onClick={() => setError('')}><X size={15}/></button></div>}
     {notice && <div className="success-banner">{notice}<button onClick={() => setNotice('')}><X size={15}/></button></div>}
 
-    <section className="metric-grid">
-      <MetricCard icon={ClipboardCheck} label="Active requirements" value={String(requirements.length)} note="Across selected classes" />
-      <MetricCard icon={Boxes} label="Learner assignments" value={String(totalAssignments)} note="Propagated from class rules" tone="blue" />
-      <MetricCard icon={CheckCircle2} label="Completed" value={String(totalComplete)} note="Paid, issued or received" tone="green" />
-      <MetricCard icon={Shirt} label="Requirement payments" value={`UGX ${totalPaid.toLocaleString()}`} note="Purpose-linked collections" tone="amber" />
+    <section className="panel class-billing-workspace">
+      <SectionHeader title="Choose a class" subtitle="The catalogue and new requirements below stay scoped to this class." action={<Link className="text-button" href="/fees">Review billing preview</Link>}/>
+      <div className="class-scope-list" role="tablist" aria-label="Classes">
+        {groups.map(group=>{const count=requirements.filter(item=>item.classes.some(value=>value.id===group.id)).length;return <button type="button" role="tab" aria-selected={selectedClassId===group.id} className={selectedClassId===group.id?'class-scope-card active':'class-scope-card'} key={group.id} onClick={()=>setSelectedClassId(group.id)}><strong>{group.name}</strong><span>{group.student_count} learner{group.student_count===1?'':'s'}</span><small>{count} requirement{count===1?'':'s'}</small></button>})}
+      </div>
+      {selectedGroup&&<div className="compact-class-summary"><strong>{selectedGroup.name}</strong><span>{classRequirements.length} configured</span><span>{totalAssignments} learner assignments</span><span>{totalComplete} completed</span><button className="btn primary" onClick={()=>setCreateOpen(true)}><Plus size={14}/>Add requirement</button></div>}
     </section>
 
-    <section className="panel">
-      <SectionHeader title="Requirement catalogue" subtitle="Choose exact classes—including P.7, S.4 or S.6—for candidate-only requirements." />
-      <RegisterFilters shown={filteredRequirements.length} total={requirements.length} active={catalogueFiltersActive} onReset={() => { setCatalogueSearch(''); setTypeFilter('all'); setClassFilter('all'); }}>
-        <FilterSearch value={catalogueSearch} onChange={setCatalogueSearch} placeholder="Search name, code, class or description" />
-        <select className="select-control" aria-label="Requirement type" value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">All requirement types</option>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-        <select className="select-control" aria-label="Requirement class" value={classFilter} onChange={event => setClassFilter(event.target.value)}><option value="all">All classes</option>{groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}</select>
+    <section className="panel requirement-catalogue">
+      <SectionHeader title={(selectedGroup?.name??'Class')+' requirements'} subtitle="Select a row to open its learner fulfilment register." />
+      <RegisterFilters shown={filteredRequirements.length} total={classRequirements.length} active={catalogueFiltersActive} onReset={() => { setCatalogueSearch(''); setTypeFilter('all'); }}>
+        <FilterSearch value={catalogueSearch} onChange={setCatalogueSearch} placeholder="Search requirement or code" />
+        <select className="select-control" aria-label="Requirement type" value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">All types</option>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       </RegisterFilters>
       <div className="table-wrap">
         <table className="data-table requirements-table">
-          <thead><tr><th>Requirement</th><th>Applies to</th><th>Period</th><th>Amount / quantity</th><th>Coverage</th></tr></thead>
+          <thead><tr><th>Requirement</th><th>Amount / quantity</th><th>Coverage</th></tr></thead>
           <tbody>
             {filteredRequirements.map(item => {
               const coverage = item.assigned_count ? Math.round(item.completed_count / item.assigned_count * 100) : 0;
               return <tr key={item.id} className={selectedId === item.id ? 'selected-row' : ''} onClick={() => setSelectedId(item.id)}>
                 <td className="entity"><strong>{item.name}</strong><small>{item.code} · {typeLabels[item.requirement_type]} · {item.is_mandatory ? 'Required' : 'Optional'} · {item.status}</small></td>
-                <td>{item.classes.map(value => value.name).join(', ')}</td>
-                <td>{item.academic_year} · Term {item.term}</td>
+
                 <td className="entity"><strong>{Number(item.amount) > 0 ? `UGX ${Number(item.amount).toLocaleString()}` : 'No cash payment'}</strong><small>{Number(item.quantity)} {item.unit}</small></td>
                 <td><div className="coverage-cell"><span>{item.completed_count}/{item.assigned_count}</span><div className="progress"><i style={{ width: `${coverage}%` }} /></div></div></td>
               </tr>;
             })}
-            {!filteredRequirements.length && <tr><td colSpan={5}><div className="empty-register"><ClipboardCheck/><strong>{requirements.length ? 'No requirements match these filters' : 'No requirements configured'}</strong><span>{requirements.length ? 'Reset or change the filters to see more requirements.' : 'Create a requirement and select the classes that should receive it.'}</span></div></td></tr>}
+            {!filteredRequirements.length && <tr><td colSpan={3}><div className="empty-register"><ClipboardCheck/><strong>{classRequirements.length ? 'No requirements match these filters' : 'No requirements configured for this class'}</strong><span>{classRequirements.length ? 'Reset or change the filters to see more requirements.' : 'Add the first fee-related item, service or document for this class.'}</span></div></td></tr>}
           </tbody>
         </table>
       </div>
@@ -315,20 +325,19 @@ export default function RequirementsClient() {
       </div>
     </section>}
 
-    {createOpen && <div className="modal-backdrop"><section className="modal registration-modal" role="dialog" aria-modal="true">
-      <header><div><h2>Create a draft requirement</h2><p>Choose the eligible learners now, then review exact assignments and amounts before publishing.</p></div><button onClick={() => setCreateOpen(false)}><X size={20}/></button></header>
+    {createOpen && selectedGroup && <div className="modal-backdrop"><section className="modal registration-modal" role="dialog" aria-modal="true">
+      <header><div><h2>Add requirement to {selectedGroup.name}</h2><p>Define the obligation once. It will follow every eligible learner in this class when billing is published.</p></div><button onClick={() => setCreateOpen(false)}><X size={20}/></button></header>
       <form className="modal-form" onSubmit={createRequirement}>
-        <div className="form-section"><h3>Requirement</h3><div className="form-grid">
-          <label>Name<input name="name" required placeholder="Senior Four candidate T-shirt" /></label>
-          <label>Code<input name="code" required placeholder="S4-TSHIRT" /></label>
-          <label>Handling<select name="requirement_type" value={requirementType} onChange={event => setRequirementType(event.target.value as Requirement['requirement_type'])}><option value="school_item">Paid, then issued by school</option><option value="payment">Payment or service only</option><option value="bring_item">Parent brings a physical item</option><option value="document">Parent submits a document</option></select></label>
-          <label>Academic period<input value={`${period?.name ?? ''} · ${period?.academic_year_name ?? ''}`} readOnly /></label>
-          <label>Due date<input name="due_date" type="date" /></label>
-          {['payment', 'school_item'].includes(requirementType) && <label>Amount (UGX)<input name="amount" type="number" min="1" step="1" required /></label>}
-          <label>Quantity<input name="quantity" type="number" min="0.01" step="0.01" defaultValue="1" required /></label>
-          <label>Unit<input name="unit" defaultValue={requirementType === 'document' ? 'document' : 'item'} required placeholder="set, ream, roll" /></label>
-        </div><label className="long-label">Instructions<textarea name="description" placeholder="Size, colour, acceptable document or handover instructions" /></label><label className="check-label"><input name="is_mandatory" type="checkbox" checked={mandatory} onChange={event=>{setMandatory(event.target.checked);if(!event.target.checked)setTargetMode('selected')}} /> Mandatory requirement</label></div>
-        <div className="form-section"><h3>Targeting</h3><p className="form-help">Select P.7, S.4 or S.6 for candidate-only obligations. Optional items must identify the learners who requested them.</p><div className="form-grid"><label>Target mode<select value={targetMode} onChange={event=>setTargetMode(event.target.value as 'cohort'|'selected')}><option value="cohort" disabled={!mandatory}>Every matching learner</option><option value="selected">Selected learners only</option></select></label><label>Stream (optional)<select name="stream_id"><option value="">All streams in selected classes</option>{groups.flatMap(group=>group.streams.map(stream=><option key={stream.id} value={stream.id}>{group.name} · {stream.name}</option>))}</select></label><label>Residence (optional)<select name="boarding_status"><option value="">All residence types</option><option value="day">Day</option><option value="boarding">Boarding</option><option value="half_boarding">Half boarding</option></select></label></div><div className="class-choice-grid">{groups.map(group => <label key={group.id}><input type="checkbox" name="class_ids" value={group.id}/><span><strong>{group.name}</strong><small>{group.student_count} learner{group.student_count === 1 ? '' : 's'}{group.canonical_code ? ` · ${group.canonical_code}` : ''}</small></span></label>)}</div>{targetMode==='selected'&&<div className="class-choice-grid learner-choice-grid">{students.map(student=><label key={student.id}><input type="checkbox" name="student_ids" value={student.id}/><span><strong>{student.full_name}</strong><small>{student.admission_no} · {student.class_name}{student.stream_name?` · ${student.stream_name}`:''}</small></span></label>)}</div>}</div>
+        <div className="class-form-context"><span>Applying to</span><strong>{selectedGroup.name}</strong><small>{selectedGroup.student_count} active learner{selectedGroup.student_count===1?'':'s'} · {period?.name}</small></div>
+        <div className="form-section"><h3>What is required?</h3><div className="form-grid">
+          <label>Name<input name="name" required autoFocus placeholder="Candidate T-shirt" /></label>
+          <label>How it is handled<select name="requirement_type" value={requirementType} onChange={event => setRequirementType(event.target.value as Requirement['requirement_type'])}><option value="school_item">Paid, then issued by school</option><option value="payment">Payment or service only</option><option value="bring_item">Parent brings an item</option><option value="document">Parent submits a document</option></select></label>
+          <label>Due date<input name="due_date" type="date" defaultValue={period?.due_date??''}/></label>
+          {['payment', 'school_item'].includes(requirementType) && <label>Amount per learner (UGX)<input name="amount" type="number" min="1" step="1" required /></label>}
+          <label>Quantity per learner<input name="quantity" type="number" min="0.01" step="0.01" defaultValue="1" required /></label>
+          <label>Unit<input key={requirementType} name="unit" defaultValue={requirementType === 'document' ? 'document' : 'item'} required placeholder="item, set, ream" /></label>
+        </div><label className="long-label">Instructions <span className="optional-label">Optional</span><textarea name="description" placeholder="Size, colour, acceptable document or handover instructions" /></label><label className="check-label"><input name="is_mandatory" type="checkbox" checked={mandatory} onChange={event=>{setMandatory(event.target.checked);setTargetMode(event.target.checked?'cohort':'selected')}} /> Assign to every eligible learner in {selectedGroup.name}</label></div>
+        <details className="advanced-options"><summary>Advanced targeting <span>Stream, residence or selected learners</span></summary><div className="form-grid"><label>Target mode<select value={targetMode} onChange={event=>{const mode=event.target.value as 'cohort'|'selected';setTargetMode(mode);setMandatory(mode==='cohort')}}><option value="cohort" disabled={!mandatory}>Every matching learner</option><option value="selected">Selected learners only</option></select></label><label>Stream<select name="stream_id"><option value="">All streams</option>{selectedGroup.streams.map(stream=><option key={stream.id} value={stream.id}>{stream.name}</option>)}</select></label><label>Residence<select name="boarding_status"><option value="">All residence types</option><option value="day">Day</option><option value="boarding">Boarding</option><option value="half_boarding">Half boarding</option></select></label></div>{targetMode==='selected'&&<div className="class-choice-grid learner-choice-grid">{classStudents.map(student=><label key={student.id}><input type="checkbox" name="student_ids" value={student.id}/><span><strong>{student.full_name}</strong><small>{student.admission_no}{student.stream_name?' · '+student.stream_name:''}</small></span></label>)}{!classStudents.length&&<p className="form-help">No active learners are placed in this class.</p>}</div>}</details>
         <footer><button type="button" className="btn" onClick={() => setCreateOpen(false)}>Cancel</button><button className="btn primary" disabled={saving}>{saving ? 'Creating…' : 'Save draft requirement'}</button></footer>
       </form>
     </section></div>}

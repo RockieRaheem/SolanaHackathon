@@ -1051,6 +1051,37 @@ def _learner_obligations(
     )
     if student is None:
         raise HTTPException(status_code=404, detail="Learner not found")
+    enrollment = session.scalar(
+        select(Enrollment).where(
+            Enrollment.student_id == student_id,
+            Enrollment.period_id == period_id,
+        )
+    )
+    pending_fee_plans = []
+    if enrollment is not None:
+        draft_plans = session.scalars(
+            select(FeeStructure)
+            .where(
+                FeeStructure.school_id == school_id,
+                FeeStructure.period_id == period_id,
+                FeeStructure.class_id == enrollment.class_id,
+                FeeStructure.status == "draft",
+                FeeStructure.is_active.is_(True),
+            )
+            .options(selectinload(FeeStructure.selected_learners))
+            .order_by(FeeStructure.name, FeeStructure.id)
+        ).all()
+        for plan in draft_plans:
+            selected_ids = {item.student_id for item in plan.selected_learners}
+            if plan.stream_id and plan.stream_id != enrollment.stream_id:
+                continue
+            if plan.boarding_status and plan.boarding_status != student.boarding_status:
+                continue
+            if plan.target_type == "selected" and student_id not in selected_ids:
+                continue
+            pending_fee_plans.append(
+                {"id": plan.id, "name": plan.name, "amount": plan.total_amount}
+            )
     requirement_rows = session.execute(
         select(StudentRequirement, Requirement)
         .join(Requirement, Requirement.id == StudentRequirement.requirement_id)
@@ -1124,6 +1155,7 @@ def _learner_obligations(
             "outstanding": max(fee_base - fee_paid, Decimal("0")),
         },
         "requirements": requirements,
+        "pending_fee_plans": pending_fee_plans,
         "account_balance": max(account_balance, Decimal("0")),
         "account_credit": max(-account_balance, Decimal("0")),
         "unallocated_credit": max(unallocated, Decimal("0")),

@@ -16,6 +16,7 @@ from harambeeone_api.models import (
     AcademicPeriod,
     AcademicYear,
     Enrollment,
+    FeeStructure,
     GuardianLink,
     LedgerEntry,
     Payment,
@@ -148,6 +149,7 @@ def payment_workspace():
             "school": school.id,
             "other_school": other_school.id,
             "period": period.id,
+            "class": academic_class.id,
             "learner": learner.id,
             "assignment": assignment.id,
         }
@@ -188,6 +190,36 @@ def payment_payload(ids: dict) -> dict:
         ],
     }
 
+
+def test_payment_desk_reports_matching_draft_fee_without_collecting_it(payment_workspace) -> None:
+    engine, ids, client = payment_workspace
+    with Session(engine) as session:
+        session.add(
+            FeeStructure(
+                school_id=ids["school"],
+                class_id=ids["class"],
+                period_id=ids["period"],
+                name="Primary Seven general fees",
+                academic_year=2027,
+                term=1,
+                total_amount=Decimal("850000"),
+                target_type="cohort",
+                status="draft",
+            )
+        )
+        session.commit()
+
+    response = client.get(
+        f"/api/v1/payment-desk/learners/{ids['learner']}/obligations",
+        params={"school_id": str(ids["school"]), "period_id": str(ids["period"])},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert Decimal(body["fees"]["billed"]) == Decimal("300000")
+    assert len(body["pending_fee_plans"]) == 1
+    assert body["pending_fee_plans"][0]["name"] == "Primary Seven general fees"
+    assert Decimal(body["pending_fee_plans"][0]["amount"]) == Decimal("850000")
 
 def test_search_channels_split_payment_and_retry_are_consistent(payment_workspace) -> None:
     engine, ids, client = payment_workspace

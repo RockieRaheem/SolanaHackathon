@@ -11,7 +11,9 @@
 
 HarambeeOne brings learner billing, payments, requirements, receipts, reconciliation, arrears, and financial reporting into one accountable workspace. Its core is an immutable learner ledger: balances are calculated from traceable financial entries instead of being stored as unexplained totals.
 
-The project also includes **Harambee Support**, an isolated workflow that lets a school turn a verified learner obligation into an anonymous, consent-controlled support campaign. Donations are never treated as received until the school independently verifies settlement and the learner ledger is updated atomically.
+The project also includes **Harambee Support**, an isolated workflow that lets a school turn a verified learner obligation into an anonymous, consent-controlled support campaign. Contributions are never treated as received until settlement is independently verified and the learner ledger is updated atomically: Solana transfers are checked server-side through RPC, while off-chain rails require school verification.
+
+> **Solana Hackathon build -- SomaFund:** parents, relatives, diaspora family members, employers, and sponsors can collaboratively fund a verified school-fee obligation with devnet SOL. The donor signs from their own wallet; HarambeeOne verifies the transfer on Solana before crediting the learner's private school account. [See the complete Solana integration](#how-solana-is-used).
 
 > [!IMPORTANT]
 > HarambeeOne is an actively developed MVP, not a production payment processor. Real-money use still requires licensed payment-provider integrations, operational controls, backups, security review, and Ugandan privacy and legal review.
@@ -40,9 +42,51 @@ The active product serves the school bursar and the minimum learner, guardian, a
 - Optional privacy-minimized Gemma review with mandatory human publication approval.
 - Public campaign discovery, pledge tracking, verified settlement posting, and redacted outcomes.
 
-### Hackathon priority
+## How Solana is used
 
-For the November 6-8 Solana Hackathon, the user has explicitly prioritised **SomaFund**: collaborative contributions toward verified school-fee invoices. The current slice adds a real Solana devnet transfer and transaction proof to the existing Support workflow while retaining Supabase as the private financial authority.
+SomaFund uses Solana as the public payment and proof layer for collaborative school-fee support. It is not a decorative wallet connection or a simulated transaction table: a donor authorizes a real **devnet SOL transfer** to a school-controlled wallet, and the backend independently reads Solana RPC before any financial record is posted.
+
+### End-to-end contribution flow
+
+1. A guardian prepares a support request for a real learner balance and gives scoped publication consent.
+2. The school reviews the request, approves any learner photo, completes the consented safety review, and publishes the campaign.
+3. An institution owner registers and verifies the school's Solana devnet wallet; HarambeeOne never stores its private key.
+4. A donor connects a Wallet Standard wallet such as Phantom or Solflare on the public campaign page.
+5. The server creates a short-lived, idempotent checkout containing the verified recipient, exact lamports, anonymous campaign memo, and expiry time.
+6. The web app uses `@solana/kit` and the System Program to build the exact SOL transfer, adds a Memo Program instruction, and asks the donor's wallet to sign and send it.
+7. The backend fetches the transaction through Solana RPC and accepts it only when all of these checks pass:
+   - the transaction succeeded and reached `confirmed` or `finalized`;
+   - the connected donor address is an actual transaction signer;
+   - the System Program transfer source and verified school destination match;
+   - the transferred lamports equal the protected checkout amount exactly;
+   - the Memo Program value matches the one-time campaign reference;
+   - the signature has not already been used for another contribution.
+8. Only after verification does one database transaction confirm the pledge, credit the learner obligation, update campaign totals, anchor the Solana signature and slot, issue the official school receipt, and write audit evidence.
+9. The donor can open the transaction in Solana Explorer and safely retry confirmation if the transfer succeeded while the receipt request was interrupted. Idempotency and the unique signature constraint prevent double posting.
+
+### Why Solana matters here
+
+Ugandan school support often comes from many small contributors, including relatives abroad. Solana provides a fast, low-cost, globally accessible transfer rail and a public proof that a specific amount reached the school's published wallet. HarambeeOne supplies the missing institutional controls: the transfer is tied to a verified obligation, reconciled into the school ledger, and converted into an accountable receipt without putting a child's identity on-chain.
+
+| Stored on Solana devnet | Kept private in Supabase PostgreSQL |
+| --- | --- |
+| Donor and school public wallet addresses | Learner and guardian identity |
+| SOL amount and confirmation slot | Admission number, class, contacts, and photo |
+| Anonymous campaign memo | Verified invoice and remaining balance |
+| Public transaction signature | Consent evidence and private family context |
+| Transaction success evidence | Allocation, school receipt, roles, and audit workflow |
+
+This MVP deliberately uses **devnet** and the native System and Memo Programs; it does not deploy a custom program or claim production custody. The configured UGX-to-SOL quote is a fixed judging/demo value, not a market oracle. A production launch would require mainnet treasury governance, regulated fiat/off-ramp partners, live pricing, key-management controls, monitoring, and legal review.
+
+### Judge demo path
+
+1. Sign in as the institution owner and open **Harambee Support**.
+2. Publish a guardian-submitted campaign after completing its consent and safety gates.
+3. Add and verify a **Solana devnet wallet** under payment methods.
+4. Open the campaign from the public support portal.
+5. Connect a devnet Wallet Standard wallet funded from the Solana faucet.
+6. Enter a whole-UGX contribution within the remaining verified balance and approve the exact devnet transaction.
+7. Observe the confirmed slot, official receipt, learner-ledger credit, updated campaign total, and Solana Explorer link.
 
 See the [SomaFund Solana build guide](docs/SOMAFUND_SOLANA_HACKATHON.md), [MVP roadmap](docs/MVP_ROADMAP.md), and [Support expansion plan](docs/HARAMBEE_SUPPORT_EXPANSION_PLAN.md).
 
@@ -87,10 +131,9 @@ School identifies a real overdue obligation
   -> Capable learner's view is recorded
   -> Private case is reviewed by the school
   -> Owner approves anonymous publication
-  -> Donor sends devnet SOL to the verified school wallet
-  -> HarambeeOne retains the public transaction signature
-  -> School independently verifies settlement
-  -> Payment, allocation, ledger credit, receipt, and audit event post together
+  -> Donor signs an exact devnet SOL transfer to the verified school wallet
+  -> HarambeeOne verifies signer, recipient, lamports, memo, status, and replay protection through RPC
+  -> Payment, allocation, ledger credit, receipt, Solana proof, and audit event post together
   -> Donor and guardian receive privacy-safe status and outcome information
 ```
 
@@ -171,8 +214,8 @@ Redis and RabbitMQ are present in the local Compose file for planned background 
 1. Clone the repository and enter the project directory.
 
    ```bash
-   git clone https://github.com/RockieRaheem/HacktoberFest-HarambeeOne.git
-   cd HacktoberFest-HarambeeOne/HarambeeOne
+   git clone https://github.com/RockieRaheem/SolanaHackathon.git
+   cd SolanaHackathon
    ```
 
 2. Create the local environment file.
@@ -196,6 +239,11 @@ Redis and RabbitMQ are present in the local Compose file for planned background 
    SUPABASE_URL=https://PROJECT_REF.supabase.co
    DATABASE_URL=postgresql+psycopg://postgres.PROJECT_REF:PASSWORD@POOLER_HOST:5432/postgres
    MIGRATION_DATABASE_URL=postgresql+psycopg://postgres.PROJECT_REF:PASSWORD@POOLER_HOST:5432/postgres
+   NEXT_PUBLIC_SOLANA_CLUSTER=devnet
+   NEXT_PUBLIC_SOLANA_RPC_URL=https://api.devnet.solana.com
+   SOLANA_CLUSTER=devnet
+   SOLANA_RPC_URL=https://api.devnet.solana.com
+   SOLANA_DEMO_UGX_PER_SOL=750000
    ```
 
    Optional Gemma configuration:
@@ -334,7 +382,6 @@ Hackathon work must preserve the bursar ledger, tenant, audit, and privacy gates
 - [SomaFund Solana Hackathon build](docs/SOMAFUND_SOLANA_HACKATHON.md)
 - [Developer handoff](docs/DEVELOPER_HANDOFF.md)
 - [Canonical MVP roadmap](docs/MVP_ROADMAP.md)
-- [Repository guide](docs/REPOSITORY_GUIDE.md)
 - [Harambee Support expansion plan](docs/HARAMBEE_SUPPORT_EXPANSION_PLAN.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security baseline](docs/SECURITY.md)

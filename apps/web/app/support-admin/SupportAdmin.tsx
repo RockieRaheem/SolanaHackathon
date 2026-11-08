@@ -164,12 +164,31 @@ export default function SupportAdmin() {
     event.preventDefault();
     if (!selected) return;
     const form = new FormData(event.currentTarget);
+    const publication = String(form.get('publication'));
+    const evidence = form.get('evidence') as File | null;
+    const photo = form.get('campaign_photo') as File | null;
+    if (evidence?.size && evidence.size > 3_000_000) return setModalError('Consent evidence must be 3 MB or smaller.');
+    if (photo?.size && photo.size > 2_000_000) return setModalError('Campaign photo must be 2 MB or smaller.');
+    const evidenceContent = evidence?.size ? await fileBase64(evidence) : null;
+    const photoContent = photo?.size ? await fileBase64(photo) : null;
     await mutate(`/api/v1/support/cases/${selected.id}/consent`, {
-      guardian_link_id:form.get('guardian_link_id'), method:form.get('method'), anonymous_publication:true,
-      gemma_processing:true, cross_border_processing:true, child_assent_status:form.get('child_assent_status'),
-    }, 'Guardian consent recorded.');
+      guardian_link_id:form.get('guardian_link_id'),
+      method:form.get('method'),
+      anonymous_publication:publication === 'anonymous',
+      public_identity_consent:publication === 'identified',
+      public_media_consent:publication === 'identified' && Boolean(photoContent),
+      gemma_processing:form.get('gemma_processing') === 'on',
+      cross_border_processing:form.get('cross_border_processing') === 'on',
+      child_assent_status:form.get('child_assent_status'),
+      evidence_filename:evidenceContent ? evidence?.name : null,
+      evidence_mime_type:evidenceContent ? evidence?.type : null,
+      evidence_base64:evidenceContent,
+      evidence_note:form.get('evidence_note') || null,
+      campaign_photo_mime_type:photoContent ? photo?.type : null,
+      campaign_photo_base64:photoContent,
+      campaign_photo_alt_text:photoContent ? form.get('campaign_photo_alt_text') : null,
+    }, 'Guardian consent and evidence recorded.');
   }
-
   async function review() {
     if (!selected) return;
     const run = (image:string|null=null, mime:string|null=null) => mutate(`/api/v1/support/cases/${selected.id}/ai-review`, { evidence_image_base64:image, evidence_mime_type:mime, evidence_redacted:Boolean(image) }, image ? 'Gemma completed the anonymous multimodal case review.' : 'Gemma completed the anonymous case review.');
@@ -255,7 +274,7 @@ export default function SupportAdmin() {
   const obligationLimit = requirementId ? Number(requirements.find(item => item.id === requirementId)?.outstanding_amount ?? 0) : generalOutstanding;
 
   return <><NotificationCenter compact/>
-    <PageHeader eyebrow="Learner support · Controlled assistance" title="Harambee Support" description="Refer verified arrears, review guardian-authored cases and publish only safe anonymous campaigns." actions={<div className="page-header-actions"><Link className="btn" href="/support" target="_blank">Public portal <ExternalLink size={15}/></Link>{school?.role === 'owner' && <button className="btn" onClick={() => setModal('destination')}>Payment methods</button>}<button className="btn" onClick={openCreate} disabled={!students.length}><Plus size={16}/>Staff-assisted case</button></div>}/>
+    <PageHeader eyebrow="Learner support · Controlled assistance" title="Harambee Support" description="Refer verified arrears, review guardian-authored cases and publish only guardian-approved campaigns." actions={<div className="page-header-actions"><Link className="btn" href="/support" target="_blank">Public portal <ExternalLink size={15}/></Link>{school?.role === 'owner' && <button className="btn" onClick={() => setModal('destination')}>Payment methods</button>}<button className="btn" onClick={openCreate} disabled={!students.length}><Plus size={16}/>Staff-assisted case</button></div>}/>
     {error && <div className="form-error page-error">{error}<button onClick={() => setError('')}><X size={15}/></button></div>}
     {notice && <div className="success-banner">{notice}</div>}
 
@@ -338,13 +357,19 @@ export default function SupportAdmin() {
 
     {modal === 'consent' && selected && <Modal title="Record scoped guardian consent" close={() => setModal(null)}><form className="modal-form" onSubmit={consent}>
       <label>Linked guardian<select name="guardian_link_id" required><option value="">Select guardian</option>{selected.guardians.map(guardian => <option key={guardian.id} value={guardian.id}>{guardian.name} · {guardian.relationship}</option>)}</select></label>
-      <label>Consent evidence<select name="method"><option value="signed_form">Signed form</option><option value="witnessed_in_person">Witnessed in person</option><option value="otp">Verified OTP</option></select></label>
+      <label>How consent was captured<select name="method"><option value="signed_form">Signed form at school</option><option value="witnessed_in_person">Witnessed in person</option><option value="otp">Verified OTP</option></select></label>
+      <label>Signed evidence or attendance record<input name="evidence" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"/><small>A signed form is mandatory when “Signed form at school” is selected. Maximum 3 MB.</small></label>
+      <label>Evidence note<textarea name="evidence_note" maxLength={500} placeholder="Who witnessed consent, where it was captured, and any relevant note."/></label>
+      <label>Public campaign identity<select name="publication" defaultValue="anonymous"><option value="anonymous">Anonymous — do not publish learner name or photo</option><option value="identified">Identified — publish learner name with explicit consent</option></select></label>
+      <label>Approved learner campaign photo <span>optional; identified campaigns only</span><input name="campaign_photo" type="file" accept="image/jpeg,image/png,image/webp"/><small>Uploading a photo records separate public-media consent. Maximum 2 MB.</small></label>
+      <label>Photo description<input name="campaign_photo_alt_text" maxLength={160} placeholder="For example: Learner standing in the school courtyard"/></label>
       <label>Learner assent<select name="child_assent_status"><option value="agreed">Learner agreed</option><option value="not_applicable">Not applicable</option><option value="unable_to_express">Unable to express</option><option value="declined">Learner declined</option></select></label>
+      <label className="portal-check"><input name="gemma_processing" type="checkbox"/>Guardian permits privacy-minimized Gemma processing for this case.</label>
+      <label className="portal-check"><input name="cross_border_processing" type="checkbox"/>Guardian understands Gemma processing may occur outside Uganda.</label>
       {modalError && <div className="form-error modal-error" role="alert">{modalError}</div>}
-      <div className="notice">Consent covers anonymous publication and privacy-safe Gemma processing, never public identity or photographs.</div>
-      <footer><button type="button" className="btn" onClick={() => setModal(null)}>Cancel</button><button className="btn primary" disabled={busy}>Record consent</button></footer>
+      <div className="notice">Record each choice separately. Only the approved name, photo and public story are published. Consent may be withdrawn, and the evidence remains restricted to authorised school staff.</div>
+      <footer><button type="button" className="btn" onClick={() => setModal(null)}>Cancel</button><button className="btn primary" disabled={busy}>{busy ? 'Recording…' : 'Record consent'}</button></footer>
     </form></Modal>}
-
     {modal === 'proof' && selected && <Modal title="Submit private outcome evidence" close={() => setModal(null)}><form className="modal-form" onSubmit={proof}>
       <label>Proof type<select name="attestation_type"><option value="fulfilment">Obligation fulfilled</option><option value="enrolment">Enrolment continuity</option><option value="guardian_acknowledgement">Guardian acknowledgement</option><option value="independent_audit">Independent audit</option></select></label>
       <label>Attendance band<select name="attendance_band"><option value="">Not applicable</option><option value="below_50">Below 50%</option><option value="50_to_69">50–69%</option><option value="70_to_79">70–79%</option><option value="80_to_89">80–89%</option><option value="90_plus">90%+</option></select></label>

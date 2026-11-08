@@ -17,6 +17,9 @@ type Campaign = {
   currency: string;
   status: string;
   school: string;
+  learner_name: string | null;
+  learner_photo_url: string | null;
+  media_alt_text: string | null;
 };
 
 const money = (value: string) => `UGX ${Number(value).toLocaleString('en-UG')}`;
@@ -57,14 +60,14 @@ export default function SupportCampaigns() {
         <div>
           <span className="support-kicker">Keep a learner learning</span>
           <h1>Support a verified school obligation, not an exposed child.</h1>
-          <p>Each campaign begins with a real balance in a participating school. Identity stays private; every verified contribution is posted to the learner&apos;s school account and receives a traceable receipt.</p>
+          <p>Each campaign begins with a real balance in a participating school. Parents choose anonymous or identified publication; every verified contribution is posted to the learner&apos;s school account and receives a traceable receipt.</p>
           <div className="support-hero-actions">
             <a href="#campaigns" className="support-primary-action">Explore campaigns <ArrowRight size={16}/></a>
             <Link href="/support-admin" className="support-secondary-action">Manage school campaigns</Link>
           </div>
         </div>
         <div className="support-proof-list">
-          <div><LockKeyhole/><span><strong>Anonymous by design</strong><small>No learner names or photographs are published.</small></span></div>
+          <div><LockKeyhole/><span><strong>Consent controls visibility</strong><small>Name and photo appear only when a guardian explicitly approves them.</small></span></div>
           <div><ReceiptText/><span><strong>Allocated at the school</strong><small>Pledges count only after settlement is verified.</small></span></div>
           <div><CheckCircle2/><span><strong>Outcome evidence</strong><small>Schools publish redacted fulfilment and continuity updates.</small></span></div>
         </div>
@@ -87,6 +90,8 @@ export default function SupportCampaigns() {
             const percentage = Math.min(100, Number(item.verified_amount) / Number(item.target_amount) * 100);
             return <article className="support-card" key={item.public_code}>
               <div className="support-card-top"><span>{item.school}</span><em>{item.need_category.replaceAll('_', ' ')}</em></div>
+              {item.learner_photo_url && <Image className="support-campaign-photo" src={item.learner_photo_url} alt={item.media_alt_text ?? 'Learner campaign photograph'} width={640} height={420} unoptimized/>}
+              {item.learner_name && <span className="support-learner-name">Supporting {item.learner_name}</span>}
               <h3>{item.title}</h3>
               <p>{item.public_summary}</p>
               <div className="support-progress">

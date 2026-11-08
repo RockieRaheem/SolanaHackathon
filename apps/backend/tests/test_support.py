@@ -193,6 +193,9 @@ def create_reviewed_campaign(client: TestClient, ids: dict) -> tuple[str, str]:
         json={
             "guardian_link_id": str(ids["guardian"]),
             "method": "signed_form",
+            "evidence_filename": "guardian-consent.pdf",
+            "evidence_mime_type": "application/pdf",
+            "evidence_base64": "c2lnbmVkIGNvbnNlbnQ=",
             "anonymous_publication": True,
             "gemma_processing": True,
             "cross_border_processing": True,
@@ -1273,6 +1276,21 @@ def test_gemma_json_parser_accepts_only_plain_or_complete_fenced_json() -> None:
     assert support_assistants.gemma_response_text(response) == json.dumps(expected)
 
 
+def test_gemma_validator_accepts_singleton_array_response() -> None:
+    response = {
+        "intent": "portal_help",
+        "answer": "Open the donor portal to review your own contribution.",
+        "suggested_actions": ["Choose a contribution."],
+        "limitations": ["This assistant cannot change payment records."],
+        "can_mutate": False,
+    }
+
+    validated = support_assistants._validate_result(
+        [response], task="portal_help", private_terms=[]
+    )
+    assert validated == {**response, "retained": False}
+
+
 def test_verified_solana_donation_posts_once_and_rejects_replay(
     support_workspace, monkeypatch
 ) -> None:
@@ -1411,3 +1429,54 @@ def test_solana_intent_cannot_be_manually_posted(support_workspace) -> None:
     with Session(engine) as session:
         assert session.scalar(select(func.count(Payment.id))) == 0
         assert session.get(SupportPledge, pledge_id).status == "pending"
+
+
+def test_identified_campaign_requires_scoped_consent_and_serves_approved_media(
+    support_workspace,
+) -> None:
+    _engine, _user_id, ids, client = support_workspace
+    created = client.post(
+        "/api/v1/support/cases",
+        json={
+            "school_id": str(ids["school"]),
+            "period_id": str(ids["period"]),
+            "student_id": str(ids["student"]),
+            "title": "Help a learner remain in class",
+            "public_summary": "A verified school balance needs community support this term.",
+            "need_category": "fees",
+            "target_amount": 200000,
+        },
+    )
+    assert created.status_code == 201, created.text
+    case_id = created.json()["id"]
+    consent = client.post(
+        f"/api/v1/support/cases/{case_id}/consent",
+        json={
+            "guardian_link_id": str(ids["guardian"]),
+            "method": "signed_form",
+            "anonymous_publication": False,
+            "public_identity_consent": True,
+            "public_media_consent": True,
+            "gemma_processing": False,
+            "cross_border_processing": False,
+            "child_assent_status": "agreed",
+            "evidence_filename": "guardian-consent.pdf",
+            "evidence_mime_type": "application/pdf",
+            "evidence_base64": "c2lnbmVkIGNvbnNlbnQ=",
+            "campaign_photo_mime_type": "image/png",
+            "campaign_photo_base64": "cGhvdG8=",
+            "campaign_photo_alt_text": "Learner at the school campus",
+        },
+    )
+    assert consent.status_code == 200, consent.text
+    published = client.post(f"/api/v1/support/cases/{case_id}/publish")
+    assert published.status_code == 200, published.text
+    code = published.json()["public_code"]
+    public = client.get(f"/api/v1/support/public/campaigns/{code}")
+    assert public.status_code == 200
+    assert public.json()["learner_name"] == "Amina Kato"
+    assert public.json()["learner_photo_url"].endswith(f"/{code}/media")
+    media = client.get(f"/api/v1/support/public/campaigns/{code}/media")
+    assert media.status_code == 200
+    assert media.headers["content-type"] == "image/png"
+    assert media.content == b"photo"

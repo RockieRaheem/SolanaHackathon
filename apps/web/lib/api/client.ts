@@ -65,6 +65,13 @@ export async function clientFetch(input: RequestInfo | URL, init?: RequestInit):
     return response;
   }
 
+  const request = input instanceof Request ? input : null;
+  if (init?.cache === 'no-store' || request?.cache === 'no-store') {
+    const response = await globalThis.fetch(input, init);
+    redirectExpiredSession(response);
+    return response;
+  }
+
   const now = Date.now();
   const cached = responseCache.get(url);
   if (cached && cached.expiresAt > now) return responseFrom(await cached.response);

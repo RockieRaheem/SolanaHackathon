@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -260,9 +260,9 @@ def test_followup_promise_retry_history_export_and_security(arrears_workspace) -
         "outcome": "commitment",
         "note": "Guardian committed to pay after salary day.",
         "next_action": "Confirm payment",
-        "next_action_date": "2026-11-02",
+        "next_action_date": (date.today() + timedelta(days=8)).isoformat(),
         "promised_amount": "100",
-        "promised_due_date": "2026-11-01",
+        "promised_due_date": (date.today() + timedelta(days=7)).isoformat(),
         "idempotency_key": "arrears-followup-0001",
     }
     created = client.post("/api/v1/arrears/follow-ups", json=payload)

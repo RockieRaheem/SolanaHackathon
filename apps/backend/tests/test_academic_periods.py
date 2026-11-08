@@ -1111,23 +1111,27 @@ def test_learner_rollover_applies_all_decisions_once(period_workspace) -> None:
         {
             "student_id": str(students["PROMOTE"]),
             "decision": "promote",
+            "reviewed": True,
             "target_class_id": str(classes["P7"]),
         },
         {
             "student_id": str(students["REPEAT"]),
             "decision": "repeat",
+            "reviewed": True,
             "target_class_id": str(classes["P6"]),
         },
         {
             "student_id": str(students["HOLD"]),
             "decision": "hold",
+            "reviewed": True,
             "reason": "Awaiting guardian confirmation",
         },
-        {"student_id": str(students["COMPLETE"]), "decision": "complete"},
+        {"student_id": str(students["COMPLETE"]), "decision": "complete", "reviewed": True},
         {
             "student_id": str(students["DEPART"]),
             "decision": "depart",
             "reason": "Family relocation",
+            "reviewed": True,
         },
     ]
     posted = client.post(
@@ -1209,6 +1213,7 @@ def test_learner_rollover_rejects_incomplete_or_invalid_review(period_workspace)
                     "student_id": str(students["ONE"]),
                     "decision": "promote",
                     "target_class_id": str(classes["P7"]),
+                    "reviewed": True,
                 }
             ],
         },
@@ -1224,11 +1229,13 @@ def test_learner_rollover_rejects_incomplete_or_invalid_review(period_workspace)
                     "student_id": str(students["ONE"]),
                     "decision": "repeat",
                     "target_class_id": str(classes["P7"]),
+                    "reviewed": True,
                 },
                 {
                     "student_id": str(students["TWO"]),
                     "decision": "promote",
                     "target_class_id": str(classes["P7"]),
+                    "reviewed": True,
                 },
             ],
         },
@@ -1262,6 +1269,7 @@ def test_learner_rollover_rolls_back_partial_placement(
                         "student_id": str(students["ROLLBACK"]),
                         "decision": "promote",
                         "target_class_id": str(classes["P7"]),
+                        "reviewed": True,
                     }
                 ],
             },
@@ -1344,6 +1352,7 @@ def test_day_care_classless_learner_continues_with_close_evidence(period_workspa
                     "student_id": str(student_id),
                     "decision": "continue",
                     "target_class_id": None,
+                    "reviewed": True,
                 }
             ],
         },

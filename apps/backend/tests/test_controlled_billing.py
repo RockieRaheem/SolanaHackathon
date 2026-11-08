@@ -18,11 +18,13 @@ from harambeeone_api.models import (
     Enrollment,
     FeeCategory,
     FeeStructure,
+    LearnerIdentity,
     LedgerEntry,
     Person,
     Requirement,
     School,
     SchoolMembership,
+    SchoolOrganization,
     Stream,
     Student,
     StudentFeeAssignment,
@@ -40,8 +42,10 @@ def billing_workspace():
     Base.metadata.create_all(engine)
     user_id = uuid.uuid4()
     with Session(engine) as session:
-        school = School(name="Billing School")
-        other_school = School(name="Other School")
+        organization = SchoolOrganization(name="Billing School")
+        other_organization = SchoolOrganization(name="Other School")
+        school = School(name="Billing School", organization=organization)
+        other_school = School(name="Other School", organization=other_organization)
         session.add_all([school, other_school])
         session.flush()
         academic_year = AcademicYear(
@@ -451,6 +455,46 @@ def test_conflicts_and_stale_previews_cannot_post(billing_workspace) -> None:
     resolved = client.get(f"/api/v1/billing/preview?{query}").json()
     assert resolved["conflicts"] == []
     assert resolved["can_publish"] is True
+
+
+def test_duplicate_learner_number_returns_conflict(billing_workspace) -> None:
+    engine, _user_id, ids, client = billing_workspace
+    payload = {
+        "school_id": str(ids["school"]),
+        "period_id": str(ids["period"]),
+        "first_name": "First",
+        "last_name": "Learner",
+        "gender": "female",
+        "learner_identification_number": "LIN-DUPLICATE",
+        "class_id": str(ids["primary"]),
+        "stream_id": str(ids["east"]),
+        "academic_year": 2027,
+        "term": 1,
+        "boarding_status": "day",
+        "nationality": "Ugandan",
+        "guardians": [
+            {
+                "first_name": "Primary",
+                "last_name": "Guardian",
+                "relationship": "guardian",
+                "phone": "+256700000001",
+                "is_primary": True,
+            }
+        ],
+    }
+
+    created = client.post("/api/v1/students", json=payload)
+    assert created.status_code == 201, created.text
+
+    payload["first_name"] = "Second"
+    conflict = client.post("/api/v1/students", json=payload)
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == (
+        "That learner identification number is already registered at this school"
+    )
+    with Session(engine) as session:
+        assert session.scalar(select(func.count(Student.id))) == 4
+        assert session.scalar(select(func.count(LearnerIdentity.id))) == 1
 
 
 def test_published_general_fee_follows_new_placement_and_scholarship_is_bounded(

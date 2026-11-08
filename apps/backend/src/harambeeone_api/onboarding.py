@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from harambeeone_api.academic_structure import PROGRAMME_NAMES, template_classes
+from harambeeone_api.academic_structure import PROGRAMME_NAMES, section_identity, template_classes
 from harambeeone_api.auth import (
     ROLE_PERMISSIONS,
     AuthenticatedUser,
@@ -81,16 +81,7 @@ def onboard_school(
     if existing:
         return SchoolSummary.model_validate(existing, from_attributes=True)
 
-    unit_type, unit_name = {
-        frozenset({"day_care"}): ("day_care", "Day care section"),
-        frozenset({"pre_primary"}): ("pre_primary", "Nursery section"),
-        frozenset({"primary"}): ("primary", "Primary section"),
-        frozenset({"lower_secondary"}): ("o_level", "O-Level section"),
-        frozenset({"lower_secondary", "upper_secondary"}): (
-            "secondary",
-            "Secondary section",
-        ),
-    }[frozenset(payload.programme_codes)]
+    unit_type, unit_name = section_identity(payload.programme_codes)
     organization = SchoolOrganization(
         name=payload.name, district=payload.district, emis_code=payload.emis_code
     )

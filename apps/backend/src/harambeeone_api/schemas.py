@@ -441,12 +441,15 @@ class PeriodReopeningCreate(BaseModel):
 class LearnerRolloverDecision(BaseModel):
     student_id: uuid.UUID
     decision: str = Field(pattern="^(continue|promote|repeat|hold|complete|depart)$")
+    reviewed: bool = False
     target_class_id: uuid.UUID | None = None
     target_stream_id: uuid.UUID | None = None
     reason: str | None = Field(default=None, max_length=240)
 
     @model_validator(mode="after")
     def validate_decision(self):
+        if not self.reviewed:
+            raise ValueError("Every rollover decision must be explicitly reviewed")
         if self.decision in {"promote", "repeat"} and self.target_class_id is None:
             raise ValueError("Promotion and repetition require a target class")
         if self.decision in {"hold", "depart"} and not (self.reason or "").strip():
@@ -920,11 +923,50 @@ class SupportCaseReviewDecision(BaseModel):
 class SupportConsentCreate(BaseModel):
     guardian_link_id: uuid.UUID
     method: str = Field(pattern="^(otp|signed_form|witnessed_in_person)$")
-    scope_version: str = Field(default="2026-10", min_length=4, max_length=24)
+    scope_version: str = Field(default="2026-11-v2", min_length=4, max_length=24)
     anonymous_publication: bool = True
+    public_identity_consent: bool = False
+    public_media_consent: bool = False
     gemma_processing: bool
     cross_border_processing: bool
     child_assent_status: str = Field(pattern="^(agreed|declined|not_applicable|unable_to_express)$")
+    evidence_filename: str | None = Field(default=None, max_length=160)
+    evidence_mime_type: str | None = Field(
+        default=None, pattern="^(application/pdf|image/(jpeg|png|webp))$"
+    )
+    evidence_base64: str | None = Field(default=None, max_length=4_000_000)
+    evidence_note: str | None = Field(default=None, max_length=500)
+    campaign_photo_mime_type: str | None = Field(
+        default=None, pattern="^image/(jpeg|png|webp)$"
+    )
+    campaign_photo_base64: str | None = Field(default=None, max_length=3_000_000)
+    campaign_photo_alt_text: str | None = Field(default=None, max_length=160)
+
+    @model_validator(mode="after")
+    def validate_publication_and_evidence(self):
+        if not self.anonymous_publication and not self.public_identity_consent:
+            raise ValueError("Choose anonymous or identified campaign publication")
+        if self.public_identity_consent and self.child_assent_status == "declined":
+            raise ValueError("Identified publication is not allowed when the learner declines")
+        if self.public_media_consent and not self.public_identity_consent:
+            raise ValueError("A public learner photo requires identified publication consent")
+        evidence_parts = (self.evidence_filename, self.evidence_mime_type, self.evidence_base64)
+        if any(evidence_parts) and not all(evidence_parts):
+            raise ValueError("Consent evidence file, type and content must be provided together")
+        if self.method == "signed_form" and not self.evidence_base64:
+            raise ValueError("Upload the signed guardian consent form")
+        photo_parts = (
+            self.campaign_photo_mime_type,
+            self.campaign_photo_base64,
+            self.campaign_photo_alt_text,
+        )
+        if self.public_media_consent and not all(photo_parts):
+            raise ValueError("A consented campaign photo and description are required")
+        if not self.public_media_consent and any(photo_parts):
+            raise ValueError("Campaign photo requires separate public media consent")
+        if self.gemma_processing and not self.cross_border_processing:
+            raise ValueError("Gemma processing requires separate cross-border consent")
+        return self
 
 
 class SupportAiReviewCreate(BaseModel):
@@ -1033,7 +1075,8 @@ class GuardianAcknowledgementCreate(BaseModel):
 
 
 class GuardianAssistantRequest(BaseModel):
-    task: str = Field(pattern="^(explain_consent|draft_campaign|navigate)$")
+    task: str = Field(pattern="^(general_help|explain_consent|draft_campaign|navigate)$")
+    referral_id: uuid.UUID | None = None
     question: str = Field(min_length=3, max_length=600)
     consent_to_gemma: bool
     consent_to_cross_border: bool
@@ -1046,7 +1089,7 @@ class GuardianAssistantRequest(BaseModel):
 
 
 class DonorAssistantRequest(BaseModel):
-    task: str = Field(pattern="^(understand_campaign|track_contribution|portal_help)$")
+    task: str = Field(pattern="^(general_help|understand_campaign|track_contribution|portal_help)$")
     question: str = Field(min_length=3, max_length=600)
     campaign_code: str | None = Field(default=None, min_length=4, max_length=32)
     contribution_id: uuid.UUID | None = None
@@ -1102,12 +1145,14 @@ class SupportReferralCreate(BaseModel):
 
 class SupportReferralConsent(BaseModel):
     action: str = Field(pattern="^(grant|decline)$")
-    privacy_notice_version: str = Field(default="2026-10-v1", max_length=24)
+    privacy_notice_version: str = Field(default="2026-11-v2", max_length=24)
     guardian_authority_confirmed: bool
     age_verification_method: str = Field(
         pattern="^(school_record|birth_certificate|guardian_declaration|national_id|other)$"
     )
     anonymous_publication: bool = False
+    public_identity_consent: bool = False
+    public_media_consent: bool = False
     gemma_processing: bool = False
     cross_border_processing: bool = False
     child_assent_status: str = Field(pattern="^(agreed|declined|not_applicable|unable_to_express)$")
@@ -1117,8 +1162,14 @@ class SupportReferralConsent(BaseModel):
     def validate_support_consent(self):
         if self.action == "grant" and not self.guardian_authority_confirmed:
             raise ValueError("Confirm guardian authority before giving consent")
-        if self.action == "grant" and not self.anonymous_publication:
-            raise ValueError("Anonymous publication consent is required to participate")
+        if self.action == "grant" and not (
+            self.anonymous_publication or self.public_identity_consent
+        ):
+            raise ValueError("Choose anonymous or identified campaign publication")
+        if self.public_identity_consent and self.child_assent_status == "declined":
+            raise ValueError("Identified publication is not allowed when the learner declines")
+        if self.public_media_consent:
+            raise ValueError("A campaign photo must be recorded and verified by the school")
         if (
             self.child_assent_status in {"not_applicable", "unable_to_express"}
             and not (self.child_assent_reason or "").strip()

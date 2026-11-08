@@ -22,6 +22,7 @@ from harambeeone_api.models import (
     LedgerEntry,
     Person,
     Requirement,
+    RequirementClass,
     Student,
     StudentFeeAssignment,
     StudentRequirement,
@@ -148,7 +149,7 @@ def assign_published_general_fee(
             school_id=school_id,
             entity_type="student_fee_assignment",
             entity_id=assignment.id,
-            action="automatically_assigned",
+            action="auto_assigned",
             actor=actor,
             summary=f"Applied published general fee {plan.name} to learner placement",
         )
@@ -158,6 +159,142 @@ def assign_published_general_fee(
         "plan_id": str(plan.id),
         "plan_name": plan.name,
         "amount": str(plan.total_amount),
+    }
+
+
+def assign_published_requirements(
+    session: Session,
+    *,
+    school_id: uuid.UUID,
+    period_id: uuid.UUID,
+    student_id: uuid.UUID,
+    class_id: uuid.UUID,
+    stream_id: uuid.UUID | None,
+    boarding_status: str,
+    actor: str,
+) -> dict:
+    """Apply published mandatory requirements when a learner joins a class."""
+    requirements = (
+        session.scalars(
+            select(Requirement)
+            .join(RequirementClass, RequirementClass.requirement_id == Requirement.id)
+            .where(
+                Requirement.school_id == school_id,
+                Requirement.period_id == period_id,
+                RequirementClass.class_id == class_id,
+                Requirement.status == "published",
+                Requirement.is_active.is_(True),
+            )
+            .options(selectinload(Requirement.selected_learners))
+            .order_by(Requirement.name, Requirement.id)
+        )
+        .unique()
+        .all()
+    )
+    eligible: list[Requirement] = []
+    for requirement in requirements:
+        selected_ids = {item.student_id for item in requirement.selected_learners}
+        if requirement.stream_id and requirement.stream_id != stream_id:
+            continue
+        if requirement.boarding_status and requirement.boarding_status != boarding_status:
+            continue
+        if selected_ids and student_id not in selected_ids:
+            continue
+        if not requirement.is_mandatory and student_id not in selected_ids:
+            continue
+        eligible.append(requirement)
+
+    existing_ids = (
+        set(
+            session.scalars(
+                select(StudentRequirement.requirement_id).where(
+                    StudentRequirement.student_id == student_id,
+                    StudentRequirement.requirement_id.in_([item.id for item in eligible]),
+                )
+            ).all()
+        )
+        if eligible
+        else set()
+    )
+    pending = [item for item in eligible if item.id not in existing_ids]
+    if not pending:
+        if eligible:
+            return {"status": "already_assigned", "assigned_count": 0}
+        return {
+            "status": "not_applicable" if requirements else "not_configured",
+            "assigned_count": 0,
+        }
+
+    assigned_names: list[str] = []
+    charge_total = Decimal("0")
+    for requirement in pending:
+        payable = requirement.requirement_type in PAYABLE_REQUIREMENT_TYPES
+        amount = requirement.amount if payable else Decimal("0")
+        idempotency_key = f"auto_req_{student_id.hex}_{requirement.id.hex}"
+        preview_token = hashlib.sha256(idempotency_key.encode()).hexdigest()
+        publication = session.scalar(
+            select(BillingPublication).where(
+                BillingPublication.school_id == school_id,
+                BillingPublication.period_id == period_id,
+                BillingPublication.idempotency_key == idempotency_key,
+            )
+        )
+        if publication is None:
+            publication = BillingPublication(
+                school_id=school_id,
+                period_id=period_id,
+                idempotency_key=idempotency_key,
+                preview_token=preview_token,
+                learner_count=1,
+                charge_total=amount,
+                credit_total=Decimal("0"),
+                net_total=amount,
+                created_by=actor,
+            )
+            session.add(publication)
+            session.flush()
+
+        assignment = StudentRequirement(
+            requirement_id=requirement.id,
+            student_id=student_id,
+            publication_id=publication.id,
+            expected_amount=requirement.amount,
+            expected_quantity=requirement.quantity,
+        )
+        session.add(assignment)
+        session.flush()
+        if payable:
+            session.add(
+                LedgerEntry(
+                    school_id=school_id,
+                    period_id=period_id,
+                    student_id=student_id,
+                    entry_type="requirement_charge",
+                    amount=requirement.amount,
+                    reference=f"REQ:{assignment.id}",
+                    description=requirement.name,
+                    publication_id=publication.id,
+                    requirement_assignment_id=assignment.id,
+                )
+            )
+            charge_total += requirement.amount
+        session.add(
+            AuditEvent(
+                school_id=school_id,
+                entity_type="student_requirement",
+                entity_id=assignment.id,
+                action="auto_assigned",
+                actor=actor,
+                summary=f"Applied published requirement {requirement.name} to learner placement",
+            )
+        )
+        assigned_names.append(requirement.name)
+
+    return {
+        "status": "assigned",
+        "assigned_count": len(assigned_names),
+        "requirement_names": assigned_names,
+        "charge_total": str(charge_total),
     }
 
 
@@ -361,8 +498,7 @@ def _billing_preview(session: Session, school_id: uuid.UUID, period_id: uuid.UUI
             for student, requirement in requirement_actions
         ),
         "adjustments": sorted(
-            (str(item.id), item.adjustment_type, _money(item.amount))
-            for item in adjustment_actions
+            (str(item.id), item.adjustment_type, _money(item.amount)) for item in adjustment_actions
         ),
         "conflicts": sorted(item["student_id"] for item in conflicts),
     }
@@ -374,9 +510,8 @@ def _billing_preview(session: Session, school_id: uuid.UUID, period_id: uuid.UUI
         "period_id": str(period.id),
         "period_name": f"{period.academic_year.name} · {period.name}",
         "preview_token": preview_token,
-        "can_publish": not conflicts and bool(
-            fee_actions or requirement_actions or adjustment_actions
-        ),
+        "can_publish": not conflicts
+        and bool(fee_actions or requirement_actions or adjustment_actions),
         "summary": {
             "learner_count": len(affected_students),
             "fee_assignment_count": len(fee_actions),

@@ -3,7 +3,11 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from harambeeone_api.academic_structure import template_classes
+from harambeeone_api.academic_structure import (
+    allowed_programmes,
+    section_identity,
+    template_classes,
+)
 from harambeeone_api.schemas import ClassWrite, SchoolCreate, SchoolOnboardingCreate, StudentCreate
 
 
@@ -136,3 +140,17 @@ def test_onboarding_rejects_combined_primary_and_secondary_workspace() -> None:
             programme_codes=["primary", "lower_secondary"],
             canonical_codes=["P1", "S1"],
         )
+
+
+def test_school_section_profiles_define_exact_programmes() -> None:
+    assert section_identity(["pre_primary"]) == ("pre_primary", "Nursery section")
+    assert section_identity(["primary"]) == ("primary", "Primary section")
+    assert section_identity(["lower_secondary"]) == ("o_level", "O-Level section")
+    assert section_identity(["lower_secondary", "upper_secondary"]) == (
+        "secondary",
+        "Secondary section",
+    )
+    assert allowed_programmes("primary", ["pre_primary", "primary"]) == ("primary",)
+    assert allowed_programmes("o_level", ["lower_secondary", "upper_secondary"]) == (
+        "lower_secondary",
+    )

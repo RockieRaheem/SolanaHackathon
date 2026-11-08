@@ -6,14 +6,23 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased, selectinload
 
-from harambeeone_api.academic_structure import GRADE_TEMPLATES, PROGRAMME_NAMES, template_classes
+from harambeeone_api.academic_structure import (
+    GRADE_TEMPLATES,
+    PROGRAMME_NAMES,
+    allowed_programmes,
+    section_identity,
+    template_classes,
+)
 from harambeeone_api.auth import (
     AuthenticatedUser,
     SchoolContext,
     get_current_user,
     require_permission,
 )
-from harambeeone_api.billing import assign_published_general_fee
+from harambeeone_api.billing import (
+    assign_published_general_fee,
+    assign_published_requirements,
+)
 from harambeeone_api.database import get_session
 from harambeeone_api.models import (
     AcademicClass,
@@ -21,6 +30,7 @@ from harambeeone_api.models import (
     Enrollment,
     FeeStructure,
     GuardianLink,
+    LearnerIdentity,
     LedgerEntry,
     Payment,
     PaymentAllocation,
@@ -54,17 +64,19 @@ from harambeeone_api.schemas import (
 router = APIRouter(prefix="/api/v1", tags=["student registry"])
 
 
-def _section_identity(programme_codes: list[str]) -> tuple[str, str]:
-    return {
-        frozenset({"day_care"}): ("day_care", "Day care section"),
-        frozenset({"pre_primary"}): ("pre_primary", "Nursery section"),
-        frozenset({"primary"}): ("primary", "Primary section"),
-        frozenset({"lower_secondary"}): ("o_level", "O-Level section"),
-        frozenset({"lower_secondary", "upper_secondary"}): (
-            "secondary",
-            "Secondary section",
-        ),
-    }[frozenset(programme_codes)]
+def _school_programmes(school: School) -> tuple[str, ...]:
+    return allowed_programmes(
+        school.unit_type,
+        [programme.programme_code for programme in school.programmes],
+    )
+
+
+def _assert_class_level(school: School, level: str) -> None:
+    if level == "day_care" or level not in _school_programmes(school):
+        raise HTTPException(
+            status_code=422,
+            detail=f"{PROGRAMME_NAMES.get(level, level)} does not belong to {school.unit_name}",
+        )
 
 
 @router.get("/schools", response_model=list[SchoolSummary])
@@ -119,7 +131,7 @@ def create_school(
         )
         session.add(organization)
         session.flush()
-    unit_type, unit_name = _section_identity(payload.programme_codes)
+    unit_type, unit_name = section_identity(payload.programme_codes)
     duplicate_unit = session.scalar(
         select(School.id).where(
             School.organization_id == organization.id,
@@ -191,14 +203,18 @@ def list_classes(
     context: SchoolContext = Depends(require_permission("school:read")),
 ) -> list[ClassSummary]:
     context.assert_school(school_id)
+    school = session.scalar(
+        select(School).where(School.id == school_id).options(selectinload(School.programmes))
+    )
+    if school is None:
+        raise HTTPException(status_code=404, detail="School not found")
+    programmes = tuple(code for code in _school_programmes(school) if code != "day_care")
     rows = session.execute(
         select(
             AcademicClass,
             func.count(func.distinct(Enrollment.student_id)),
             func.count(func.distinct(FeeStructure.id)).filter(FeeStructure.status == "draft"),
-            func.count(func.distinct(FeeStructure.id)).filter(
-                FeeStructure.status == "published"
-            ),
+            func.count(func.distinct(FeeStructure.id)).filter(FeeStructure.status == "published"),
             func.count(func.distinct(RequirementClass.requirement_id)).filter(
                 Requirement.status == "draft"
             ),
@@ -210,7 +226,10 @@ def list_classes(
         .outerjoin(FeeStructure, FeeStructure.class_id == AcademicClass.id)
         .outerjoin(RequirementClass, RequirementClass.class_id == AcademicClass.id)
         .outerjoin(Requirement, Requirement.id == RequirementClass.requirement_id)
-        .where(AcademicClass.school_id == school_id)
+        .where(
+            AcademicClass.school_id == school_id,
+            AcademicClass.level.in_(programmes),
+        )
         .group_by(AcademicClass.id)
         .order_by(AcademicClass.sort_order)
         .options(selectinload(AcademicClass.streams))
@@ -247,8 +266,12 @@ def create_class(
     context: SchoolContext = Depends(require_permission("school:manage")),
 ) -> ClassSummary:
     context.assert_school(school_id)
-    if session.get(School, school_id) is None:
+    school = session.scalar(
+        select(School).where(School.id == school_id).options(selectinload(School.programmes))
+    )
+    if school is None:
         raise HTTPException(status_code=404, detail="School not found")
+    _assert_class_level(school, payload.level)
     academic_class = AcademicClass(
         school_id=school_id,
         name=payload.name,
@@ -299,6 +322,13 @@ def apply_class_template(
     )
     if school is None:
         raise HTTPException(status_code=404, detail="School not found")
+    allowed = set(_school_programmes(school))
+    requested = set(payload.programme_codes)
+    if not requested.issubset(allowed):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Standard levels must belong to {school.unit_name}",
+        )
     existing_codes = {
         item.canonical_code for item in school.classes if item.canonical_code is not None
     }
@@ -371,6 +401,14 @@ def update_class(
     if academic_class is None:
         raise HTTPException(status_code=404, detail="Class not found")
     existing = {stream.name.casefold(): stream for stream in academic_class.streams}
+    school = session.scalar(
+        select(School)
+        .where(School.id == context.school_id)
+        .options(selectinload(School.programmes))
+    )
+    if school is None:
+        raise HTTPException(status_code=404, detail="School not found")
+    _assert_class_level(school, payload.level)
     requested = {name.casefold(): name for name in payload.streams}
     removed = [stream for key, stream in existing.items() if key not in requested]
     for stream in removed:
@@ -817,6 +855,14 @@ def transfer_student(
     academic_class = session.get(AcademicClass, payload.class_id)
     if academic_class is None or academic_class.school_id != student.school_id:
         raise HTTPException(status_code=422, detail="Class does not belong to the learner's school")
+    school = session.scalar(
+        select(School)
+        .where(School.id == student.school_id)
+        .options(selectinload(School.programmes))
+    )
+    if school is None:
+        raise HTTPException(status_code=404, detail="School not found")
+    _assert_class_level(school, academic_class.level)
     stream = session.get(Stream, payload.stream_id) if payload.stream_id else None
     if stream is not None and stream.class_id != payload.class_id:
         raise HTTPException(status_code=422, detail="Stream does not belong to the selected class")
@@ -860,6 +906,16 @@ def transfer_student(
         class_id=payload.class_id,
         actor=context.actor,
     )
+    requirement_assignment = assign_published_requirements(
+        session,
+        school_id=context.school_id,
+        period_id=period.id,
+        student_id=student.id,
+        class_id=payload.class_id,
+        stream_id=payload.stream_id,
+        boarding_status=student.boarding_status,
+        actor=context.actor,
+    )
     session.commit()
     return {
         "student_id": student.id,
@@ -869,6 +925,7 @@ def transfer_student(
         "academic_year": period.academic_year.year,
         "term": period.sequence,
         "fee_assignment": fee_assignment,
+        "requirement_assignment": requirement_assignment,
     }
 
 
@@ -886,6 +943,15 @@ def _register_student(payload: StudentCreate, session: Session) -> StudentSummar
         academic_class is None or academic_class.school_id != payload.school_id
     ):
         raise HTTPException(status_code=422, detail="Class does not belong to the selected school")
+    school = session.scalar(
+        select(School)
+        .where(School.id == payload.school_id)
+        .options(selectinload(School.programmes))
+    )
+    if school is None:
+        raise HTTPException(status_code=404, detail="School not found")
+    if academic_class is not None:
+        _assert_class_level(school, academic_class.level)
     if payload.class_id is None:
         day_care = session.scalar(
             select(SchoolProgramme.id).where(
@@ -907,6 +973,16 @@ def _register_student(payload: StudentCreate, session: Session) -> StudentSummar
             detail="Fees are assigned through billing preview and publication, not registration",
         )
 
+    school = session.get(School, payload.school_id)
+    if school is None or school.organization_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="The school must belong to an organization before learners can be registered",
+        )
+    identity = LearnerIdentity(organization_id=school.organization_id)
+    session.add(identity)
+    session.flush()
+
     person = Person(
         first_name=payload.first_name.strip(),
         middle_name=payload.middle_name,
@@ -921,7 +997,12 @@ def _register_student(payload: StudentCreate, session: Session) -> StudentSummar
         school_id=payload.school_id,
         person_id=person.id,
         admission_no=f"H1-{period.academic_year.year}-{str(student_id)[:8].upper()}",
-        learner_identification_number=payload.learner_identification_number,
+        learner_identity_id=identity.id,
+        learner_identification_number=(
+            payload.learner_identification_number.strip()
+            if payload.learner_identification_number
+            else None
+        ),
         gender=payload.gender,
         boarding_status=payload.boarding_status,
         nationality=payload.nationality,
@@ -982,8 +1063,24 @@ def register_student(
     context: SchoolContext = Depends(require_permission("students:write")),
 ) -> StudentSummary:
     context.assert_school(payload.school_id)
+    learner_number = (
+        payload.learner_identification_number.strip()
+        if payload.learner_identification_number
+        else None
+    )
+    if learner_number and session.scalar(
+        select(Student.id).where(
+            Student.school_id == payload.school_id,
+            Student.learner_identification_number == learner_number,
+        )
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="That learner identification number is already registered at this school",
+        )
     result = _register_student(payload, session)
     fee_assignment = None
+    requirement_assignment = None
     if payload.class_id is not None:
         period = resolve_period(
             session,
@@ -1000,6 +1097,16 @@ def register_student(
             class_id=payload.class_id,
             actor=context.actor,
         )
+        requirement_assignment = assign_published_requirements(
+            session,
+            school_id=context.school_id,
+            period_id=period.id,
+            student_id=result.id,
+            class_id=payload.class_id,
+            stream_id=payload.stream_id,
+            boarding_status=payload.boarding_status,
+            actor=context.actor,
+        )
     session.add(
         AuditEvent(
             school_id=context.school_id,
@@ -1009,7 +1116,9 @@ def register_student(
             actor=context.actor,
             summary=(
                 f"Registered learner {result.admission_no}; general fee status "
-                f"{fee_assignment['status'] if fee_assignment else 'not_applicable'}"
+                f"{fee_assignment['status'] if fee_assignment else 'not_applicable'}; "
+                f"published requirements "
+                f"{requirement_assignment['assigned_count'] if requirement_assignment else 0}"
             ),
         )
     )
@@ -1045,6 +1154,16 @@ def import_students(
                         period_id=period.id,
                         student_id=registered.id,
                         class_id=student.class_id,
+                        actor=context.actor,
+                    )
+                    assign_published_requirements(
+                        session,
+                        school_id=context.school_id,
+                        period_id=period.id,
+                        student_id=registered.id,
+                        class_id=student.class_id,
+                        stream_id=student.stream_id,
+                        boarding_status=student.boarding_status,
                         actor=context.actor,
                     )
             except HTTPException as error:

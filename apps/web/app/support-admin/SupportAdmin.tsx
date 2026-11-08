@@ -360,7 +360,7 @@ export default function SupportAdmin() {
       <aside className="panel support-case-detail">
         <SectionHeader title={selected?.title ?? 'Case workflow'} subtitle={selected ? `${selected.student.name} · ${selected.student.admission_no}` : 'Select a case to continue'}/>
         {selected && <div className="support-admin-body">
-          <div className="support-admin-progress"><span>1. Consent <b>{selected.consent ? 'Complete' : 'Required'}</b></span><span>2. Submission <b>{selected.guardian_authored ? selected.status : 'Staff assisted'}</b></span><span>3. Safety review <b>{selected.ai_review ? 'Gemma complete' : selected.consent?.gemma_processing ? 'Gemma pending' : 'Manual'}</b></span><span>4. Publication <b>{selected.status}</b></span></div>
+          <div className="support-admin-progress"><span>1. Consent <b>{selected.consent ? 'Complete' : 'Required'}</b></span><span>2. Submission <b>{selected.guardian_authored ? selected.status : 'Staff assisted'}</b></span><span>3. Safety review <b>{selected.ai_review ? 'Gemma advisory complete' : 'Human owner review'}</b></span><span>4. Publication <b>{selected.status}</b></span></div>
           <p>{selected.public_summary}</p>
           {selected.private_context && <div className="support-private-context"><strong>Private guardian context</strong><p>{selected.private_context}</p><small>Never shown on the public donor portal.</small></div>}
           {selected.media && <section className="support-media-review">
@@ -373,15 +373,15 @@ export default function SupportAdmin() {
           <div className="support-case-actions">
             {!selected.consent && <button className="btn" onClick={() => { setModalError(''); setModal('consent'); }}>Record consent</button>}
             {selected.guardian_authored && selected.status === 'submitted' && ['owner','bursar'].includes(school?.role ?? '') && <button className="btn" disabled={busy} onClick={() => reviewDecision('request_changes')}>Request changes</button>}
-            {selected.consent?.gemma_processing && !selected.ai_review && selected.status === 'submitted' && ['owner','bursar'].includes(school?.role ?? '') && <button className="btn primary" disabled={busy} onClick={review}>{busy ? 'Running safety review…' : 'Run safety review to continue'}</button>}
-            {selected.guardian_authored && selected.status === 'submitted' && school?.role === 'owner' && (!selected.consent?.gemma_processing || selected.ai_review) && <button className="btn primary" disabled={busy} onClick={approveAndPublish}>{busy ? 'Publishing…' : 'Approve & publish to donor portal'}</button>}
+            {selected.consent?.gemma_processing && !selected.ai_review && selected.status === 'submitted' && ['owner','bursar'].includes(school?.role ?? '') && <button className="btn" disabled={busy} onClick={review}>{busy ? 'Running safety review…' : 'Run optional Gemma review'}</button>}
+            {selected.guardian_authored && selected.status === 'submitted' && school?.role === 'owner' && <button className="btn primary" disabled={busy} onClick={approveAndPublish}>{busy ? 'Publishing…' : 'Approve & publish to donor portal'}</button>}
             {selected.guardian_authored && selected.status === 'approved' && school?.role === 'owner' && <button className="btn primary" disabled={busy} onClick={publish}>Publish campaign</button>}
             {!selected.guardian_authored && selected.consent && !selected.ai_review && <button className="btn primary" disabled={busy} onClick={review}>Run Gemma review</button>}
             {!selected.guardian_authored && selected.ai_review && selected.status === 'review' && school?.role === 'owner' && <button className="btn primary" disabled={busy} onClick={publish}>Approve & publish</button>}
             {selected.status === 'submitted' && school?.role !== 'owner' && <span className="support-owner-note">An institution owner must give final approval.</span>}
             {['published','funded','closed'].includes(selected.status) && <><Link className="btn" href={`/support/${selected.public_code}`} target="_blank">Public record <ExternalLink size={14}/></Link><button className="btn" onClick={() => { setModalError(''); setModal('proof'); }}>Add proof update</button></>}
           </div>
-          {selected.status === 'submitted' && selected.consent?.gemma_processing && !selected.ai_review && <div className="support-owner-note">Publication is waiting for the consented Gemma safety review. Run the review above; an owner can then approve and publish the campaign in one step.</div>}
+          {selected.status === 'submitted' && selected.consent?.gemma_processing && !selected.ai_review && <div className="support-owner-note">Gemma review is optional advisory support. The institution owner may publish after completing the human safeguarding review.</div>}
           {selected.ai_review && <div className="support-review"><strong>Gemma recommendation</strong><p>{selected.ai_review.recommended_action}</p>{selected.ai_review.consistency_flags.length > 0 && <small>Flags: {selected.ai_review.consistency_flags.join(' · ')}</small>}</div>}
           <h3>Guardian portal access</h3>
           <p className="muted-action">Invitations expire after 72 hours, work once, and require the guardian&apos;s registered email.</p>

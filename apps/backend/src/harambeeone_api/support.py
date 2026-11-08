@@ -2808,11 +2808,6 @@ def decide_support_case_review(
                 status_code=403,
                 detail="Only an institution owner can approve a support case",
             )
-        if referral.gemma_processing and _latest_review(session, case_id) is None:
-            raise HTTPException(
-                status_code=409,
-                detail="Complete the consented Gemma review before owner approval",
-            )
         support_case.status = "approved"
         support_case.approved_by = context.actor
         support_case.review_notes = (payload.note or "").strip() or None
@@ -2895,8 +2890,6 @@ def publish_support_case(
         )
         if media is None:
             raise HTTPException(status_code=409, detail="Approved campaign photo is required")
-    if consent.gemma_processing and _latest_review(session, case_id) is None:
-        raise HTTPException(status_code=409, detail="Complete the Gemma review before publication")
     support_case.status = "published"
     support_case.approved_by = support_case.approved_by or context.actor
     support_case.published_at = datetime.now(UTC)

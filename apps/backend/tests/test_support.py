@@ -473,6 +473,8 @@ def test_guardian_authors_case_school_requests_changes_and_owner_publishes(
             guardian_authority_confirmed=True,
             age_verification_method="school_record",
             anonymous_publication=True,
+            gemma_processing=True,
+            cross_border_processing=True,
             child_assent_status="agreed",
             consented_by_user_id=guardian_user_id,
             consented_at=datetime.now(UTC),

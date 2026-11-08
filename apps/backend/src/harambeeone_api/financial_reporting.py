@@ -110,12 +110,16 @@ def summarize_ledger_entries(
     )
 
 
-def _prior_period_ids(session: Session, period: AcademicPeriod) -> list[uuid.UUID]:
-    return list(
-        session.scalars(
-            select(AcademicPeriod.id)
+def load_learner_financial_totals(
+    session: Session, *, period: AcademicPeriod
+) -> dict[uuid.UUID, FinancialTotals]:
+    prior_by_student = dict(
+        session.execute(
+            select(LedgerEntry.student_id, func.coalesce(func.sum(LedgerEntry.amount), 0))
+            .join(AcademicPeriod, AcademicPeriod.id == LedgerEntry.period_id)
             .join(AcademicYear, AcademicYear.id == AcademicPeriod.academic_year_id)
             .where(
+                LedgerEntry.school_id == period.school_id,
                 AcademicPeriod.school_id == period.school_id,
                 (AcademicYear.year < period.academic_year.year)
                 | (
@@ -123,27 +127,8 @@ def _prior_period_ids(session: Session, period: AcademicPeriod) -> list[uuid.UUI
                     & (AcademicPeriod.sequence < period.sequence)
                 ),
             )
+            .group_by(LedgerEntry.student_id)
         ).all()
-    )
-
-
-def load_learner_financial_totals(
-    session: Session, *, period: AcademicPeriod
-) -> dict[uuid.UUID, FinancialTotals]:
-    prior_ids = _prior_period_ids(session, period)
-    prior_by_student = (
-        dict(
-            session.execute(
-                select(LedgerEntry.student_id, func.coalesce(func.sum(LedgerEntry.amount), 0))
-                .where(
-                    LedgerEntry.school_id == period.school_id,
-                    LedgerEntry.period_id.in_(prior_ids),
-                )
-                .group_by(LedgerEntry.student_id)
-            ).all()
-        )
-        if prior_ids
-        else {}
     )
     current_groups: dict[uuid.UUID, list[tuple[str, bool, Decimal]]] = defaultdict(list)
     for student_id, entry_type, payment_linked, amount in session.execute(

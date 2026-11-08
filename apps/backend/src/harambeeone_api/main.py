@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
 from harambeeone_api.accounts import router as accounts_router
@@ -80,6 +80,19 @@ app.include_router(staff_access_router)
 app.include_router(support_router)
 app.include_router(support_notifications_router)
 app.include_router(support_assistants_router)
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(_request: Request, error: IntegrityError) -> JSONResponse:
+    """Report data conflicts without incorrectly claiming the database is offline."""
+    logger.warning("Database integrity conflict", exc_info=error)
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "detail": "The request conflicts with an existing record or database rule",
+            "code": "DATABASE_CONFLICT",
+        },
+    )
 
 
 @app.exception_handler(SQLAlchemyError)

@@ -25,6 +25,7 @@ from harambeeone_api.models import (
     Requirement,
     School,
     SchoolMembership,
+    SettlementAnchor,
     Student,
     StudentRequirement,
 )
@@ -72,9 +73,7 @@ def payment_workspace():
             sort_order=7,
         )
         learner_person = Person(first_name="Amina", last_name="Kato")
-        guardian = Person(
-            first_name="Sarah", last_name="Kato", phone="+256700123456"
-        )
+        guardian = Person(first_name="Sarah", last_name="Kato", phone="+256700123456")
         session.add_all([period, academic_class, learner_person, guardian])
         session.flush()
         learner = Student(
@@ -139,9 +138,7 @@ def payment_workspace():
                     reference=f"REQ:{assignment.id}",
                     requirement_assignment_id=assignment.id,
                 ),
-                SchoolMembership(
-                    school_id=school.id, auth_user_id=user_id, role="owner"
-                ),
+                SchoolMembership(school_id=school.id, auth_user_id=user_id, role="owner"),
             ]
         )
         session.commit()
@@ -221,11 +218,10 @@ def test_payment_desk_reports_matching_draft_fee_without_collecting_it(payment_w
     assert body["pending_fee_plans"][0]["name"] == "Primary Seven general fees"
     assert Decimal(body["pending_fee_plans"][0]["amount"]) == Decimal("850000")
 
+
 def test_search_channels_split_payment_and_retry_are_consistent(payment_workspace) -> None:
     engine, ids, client = payment_workspace
-    channels = client.get(
-        "/api/v1/payment-channels", params={"school_id": str(ids["school"])}
-    )
+    channels = client.get("/api/v1/payment-channels", params={"school_id": str(ids["school"])})
     assert channels.status_code == 200, channels.text
     assert {item["code"] for item in channels.json()} >= {
         "cash",
@@ -270,9 +266,7 @@ def test_search_channels_split_payment_and_retry_are_consistent(payment_workspac
         assert session.scalar(select(func.count(Payment.id))) == 1
         assert session.scalar(select(func.count(PaymentAllocation.id))) == 3
         assert session.scalar(
-            select(func.sum(LedgerEntry.amount)).where(
-                LedgerEntry.student_id == ids["learner"]
-            )
+            select(func.sum(LedgerEntry.amount)).where(LedgerEntry.student_id == ids["learner"])
         ) == Decimal("150000")
 
     after = client.get(
@@ -313,19 +307,16 @@ def test_correction_is_linked_idempotent_and_restores_balances(payment_workspace
     assert correction["original_payment_id"] == original["id"]
     assert correction["receipt_no"].endswith("000002")
 
-    retried = client.post(
-        f"/api/v1/payments/{original['id']}/corrections", json=correction_payload
-    )
+    retried = client.post(f"/api/v1/payments/{original['id']}/corrections", json=correction_payload)
     assert retried.status_code == 200, retried.text
     assert retried.json()["id"] == correction["id"]
     with Session(engine) as session:
         assert session.scalar(select(func.count(Payment.id))) == 2
+        assert session.scalar(select(func.count(SettlementAnchor.id))) == 2
         persisted = session.get(Payment, uuid.UUID(original["id"]))
         assert persisted.status == "partially_refunded"
         assert session.scalar(
-            select(func.sum(LedgerEntry.amount)).where(
-                LedgerEntry.student_id == ids["learner"]
-            )
+            select(func.sum(LedgerEntry.amount)).where(LedgerEntry.student_id == ids["learner"])
         ) == Decimal("200000")
 
     report = client.get(
@@ -337,6 +328,12 @@ def test_correction_is_linked_idempotent_and_restores_balances(payment_workspace
             "end_date": "2030-12-31",
         },
     )
+    register = client.get(
+        "/api/v1/payments",
+        params={"school_id": str(ids["school"]), "period_id": str(ids["period"])},
+    )
+    assert register.status_code == 200, register.text
+    assert {item["transaction_type"] for item in register.json()} == {"receipt", "refund"}
     assert report.status_code == 200, report.text
     assert Decimal(report.json()["collected"]) == Decimal("200000")
     assert report.json()["transaction_count"] == 2

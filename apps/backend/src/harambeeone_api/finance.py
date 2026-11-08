@@ -1173,8 +1173,18 @@ def search_payment_learners(
     context.assert_school(school_id)
     resolve_period(session, school_id=school_id, period_id=period_id)
     term = q.strip()
+    live_balance = (
+        select(func.coalesce(func.sum(LedgerEntry.amount), 0))
+        .where(
+            LedgerEntry.school_id == school_id,
+            LedgerEntry.period_id == period_id,
+            LedgerEntry.student_id == Student.id,
+        )
+        .correlate(Student)
+        .scalar_subquery()
+    )
     query = (
-        select(Student, Person, AcademicClass, Stream)
+        select(Student, Person, AcademicClass, Stream, live_balance.label("account_balance"))
         .join(Person, Person.id == Student.person_id)
         .join(
             Enrollment,
@@ -1205,7 +1215,9 @@ def search_payment_learners(
                 Student.id.in_(guardian_people),
             )
         )
-    rows = session.execute(query.distinct().order_by(Student.admission_no).limit(30)).all()
+    rows = session.execute(
+        query.distinct().order_by(live_balance.desc(), Student.admission_no).limit(50)
+    ).all()
     return [
         {
             "id": student.id,
@@ -1213,8 +1225,9 @@ def search_payment_learners(
             "full_name": f"{person.first_name} {person.last_name}",
             "class_name": academic_class.name,
             "stream_name": stream.name if stream else None,
+            "account_balance": max(account_balance or Decimal("0"), Decimal("0")),
         }
-        for student, person, academic_class, stream in rows
+        for student, person, academic_class, stream, account_balance in rows
     ]
 
 
@@ -1321,13 +1334,88 @@ def list_payments(
 ):
     context.assert_school(school_id)
     period = resolve_period(session, school_id=school_id, period_id=period_id)
-    rows = session.scalars(
+    payments = session.scalars(
         select(Payment)
         .where(Payment.school_id == school_id, Payment.period_id == period.id)
         .order_by(Payment.received_at.desc(), Payment.id.desc())
         .limit(200)
     ).all()
-    return [_payment_summary(session, payment) for payment in rows]
+    if not payments:
+        return []
+
+    payment_ids = [payment.id for payment in payments]
+    allocation_map: dict[uuid.UUID, list[dict]] = {payment_id: [] for payment_id in payment_ids}
+    learner_map: dict[uuid.UUID, tuple[Student, Person]] = {}
+    for allocation, student, person, requirement in session.execute(
+        select(PaymentAllocation, Student, Person, Requirement)
+        .join(Student, Student.id == PaymentAllocation.student_id)
+        .join(Person, Person.id == Student.person_id)
+        .outerjoin(
+            StudentRequirement,
+            StudentRequirement.id == PaymentAllocation.requirement_assignment_id,
+        )
+        .outerjoin(Requirement, Requirement.id == StudentRequirement.requirement_id)
+        .where(PaymentAllocation.payment_id.in_(payment_ids))
+        .order_by(PaymentAllocation.payment_id, PaymentAllocation.id)
+    ):
+        learner_map.setdefault(allocation.payment_id, (student, person))
+        allocation_map[allocation.payment_id].append(
+            {
+                "id": allocation.id,
+                "allocation_type": allocation.allocation_type,
+                "amount": allocation.amount,
+                "purpose": (
+                    requirement.name
+                    if requirement
+                    else "Unallocated learner credit"
+                    if allocation.allocation_type == "unallocated"
+                    else "School fees"
+                ),
+                "requirement_assignment_id": allocation.requirement_assignment_id,
+            }
+        )
+    anchors = {
+        anchor.payment_id: anchor
+        for anchor in session.scalars(
+            select(SettlementAnchor).where(SettlementAnchor.payment_id.in_(payment_ids))
+        ).all()
+    }
+
+    summaries: list[PaymentSummary] = []
+    for payment in payments:
+        allocations = allocation_map.get(payment.id, [])
+        learner = learner_map.get(payment.id)
+        anchor = anchors.get(payment.id)
+        if not allocations or learner is None or anchor is None:
+            raise HTTPException(status_code=409, detail="Payment record is incomplete")
+        student, person = learner
+        purpose = (
+            allocations[0]["purpose"]
+            if len(allocations) == 1
+            else f"{len(allocations)} allocations"
+        )
+        summaries.append(
+            PaymentSummary(
+                id=payment.id,
+                receipt_no=payment.receipt_no,
+                external_reference=payment.external_reference,
+                student_name=f"{person.first_name} {person.last_name}",
+                admission_no=student.admission_no,
+                channel=payment.channel,
+                amount=payment.amount,
+                currency=payment.currency,
+                status=payment.status,
+                transaction_type=payment.transaction_type,
+                original_payment_id=payment.original_payment_id,
+                correction_reason=payment.correction_reason,
+                purpose=purpose,
+                allocations=allocations,
+                settlement_status=anchor.status,
+                commitment_hash=anchor.commitment_hash,
+                received_at=payment.received_at.isoformat(),
+            )
+        )
+    return summaries
 
 
 def _resolved_allocations(

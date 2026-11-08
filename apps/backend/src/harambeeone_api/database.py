@@ -23,11 +23,11 @@ def get_engine() -> Engine:
         pool_size=5,
         max_overflow=5,
         pool_timeout=10,
-        # Supabase is a remote database; pre-ping doubles the network round trips
-        # for every request. Short recycling keeps pooled connections fresh without
-        # putting an extra query on the critical path.
+        # Keep Supabase session-pooler connections warm. Reconnecting takes several
+        # seconds, while pre-ping would add a network round trip to every request.
         pool_pre_ping=False,
-        pool_recycle=120,
+        pool_recycle=1800,
+        pool_use_lifo=True,
     )
 
 

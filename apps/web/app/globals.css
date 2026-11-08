@@ -55,3 +55,5 @@ html{scroll-behavior:auto}.table-wrap,.flow-line,.page-actions,.primary-nav,.mod
 
 /* Fee-plan dialog: keep validation and actions reachable at every viewport size. */
 .fee-plan-modal .modal-form{overflow-y:scroll;scrollbar-gutter:stable both-edges}.fee-plan-modal .form-error{display:grid;gap:4px;position:sticky;top:0;z-index:4}.fee-plan-modal .form-error strong,.fee-plan-modal .form-error span{display:block}.fee-plan-modal .form-error span{font-weight:500;line-height:1.45;text-transform:none;letter-spacing:0}.fee-plan-modal input[type=number]:invalid,.fee-plan-modal input[type=date]:invalid{border-color:#c84a3f;background:#fff8f7}
+
+/* Resilient modal content */.modal>header>div,.modal-form,.modal-form .form-grid>*,.modal section,.modal article,.modal article>div{min-width:0}.modal h2,.modal header p,.modal label,.modal strong,.modal small,.modal .form-error{overflow-wrap:anywhere;word-break:normal}.modal input,.modal select,.modal textarea{min-width:0;max-width:100%}.modal-form>footer{flex-wrap:wrap}.modal .btn{max-width:100%;white-space:normal}

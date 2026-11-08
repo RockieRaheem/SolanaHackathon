@@ -207,6 +207,35 @@ export default function SupportAdmin() {
   }
 
   async function publish() { if (selected) await mutate(`/api/v1/support/cases/${selected.id}/publish`, {}, 'Campaign published to the donor portal.'); }
+  async function approveAndPublish() {
+    if (!selected || !school) return;
+    setBusy(true); setError(''); setNotice('');
+    let approved = false;
+    try {
+      const approvalResponse = await fetch(`${API}/api/v1/support/cases/${selected.id}/review-decision`, {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'approve',note:null}),
+      });
+      const approvalBody = await apiBody<{detail?:unknown}>(approvalResponse);
+      if (!approvalResponse.ok) throw new Error(apiError(approvalBody.detail, approvalResponse.status));
+      approved = true;
+      const publishResponse = await fetch(`${API}/api/v1/support/cases/${selected.id}/publish`, {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:'{}',
+      });
+      const publishBody = await apiBody<{detail?:unknown}>(publishResponse);
+      if (!publishResponse.ok) throw new Error(apiError(publishBody.detail, publishResponse.status));
+      setNotice('Campaign approved and published to the donor portal.');
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'The campaign could not be published.';
+      setError(approved ? `Owner approval was saved, but publication failed: ${message}` : message);
+    } finally {
+      try {
+        await load(school.id, periodId);
+        await openCase(selected.id);
+      } finally {
+        setBusy(false);
+      }
+    }
+  }
   async function reviewDecision(action:'request_changes'|'approve') {
     if (!selected) return;
     const note = action === 'request_changes' ? window.prompt('Tell the guardian exactly what must change before resubmission:') : null;
@@ -344,14 +373,15 @@ export default function SupportAdmin() {
           <div className="support-case-actions">
             {!selected.consent && <button className="btn" onClick={() => { setModalError(''); setModal('consent'); }}>Record consent</button>}
             {selected.guardian_authored && selected.status === 'submitted' && ['owner','bursar'].includes(school?.role ?? '') && <button className="btn" disabled={busy} onClick={() => reviewDecision('request_changes')}>Request changes</button>}
-            {selected.consent?.gemma_processing && !selected.ai_review && selected.status === 'submitted' && ['owner','bursar'].includes(school?.role ?? '') && <button className="btn" disabled={busy} onClick={review}>Run consented Gemma review</button>}
-            {selected.guardian_authored && selected.status === 'submitted' && school?.role === 'owner' && (!selected.consent?.gemma_processing || selected.ai_review) && <button className="btn primary" disabled={busy} onClick={() => reviewDecision('approve')}>Approve case</button>}
+            {selected.consent?.gemma_processing && !selected.ai_review && selected.status === 'submitted' && ['owner','bursar'].includes(school?.role ?? '') && <button className="btn primary" disabled={busy} onClick={review}>{busy ? 'Running safety review…' : 'Run safety review to continue'}</button>}
+            {selected.guardian_authored && selected.status === 'submitted' && school?.role === 'owner' && (!selected.consent?.gemma_processing || selected.ai_review) && <button className="btn primary" disabled={busy} onClick={approveAndPublish}>{busy ? 'Publishing…' : 'Approve & publish to donor portal'}</button>}
             {selected.guardian_authored && selected.status === 'approved' && school?.role === 'owner' && <button className="btn primary" disabled={busy} onClick={publish}>Publish campaign</button>}
             {!selected.guardian_authored && selected.consent && !selected.ai_review && <button className="btn primary" disabled={busy} onClick={review}>Run Gemma review</button>}
             {!selected.guardian_authored && selected.ai_review && selected.status === 'review' && school?.role === 'owner' && <button className="btn primary" disabled={busy} onClick={publish}>Approve & publish</button>}
             {selected.status === 'submitted' && school?.role !== 'owner' && <span className="support-owner-note">An institution owner must give final approval.</span>}
             {['published','funded','closed'].includes(selected.status) && <><Link className="btn" href={`/support/${selected.public_code}`} target="_blank">Public record <ExternalLink size={14}/></Link><button className="btn" onClick={() => { setModalError(''); setModal('proof'); }}>Add proof update</button></>}
           </div>
+          {selected.status === 'submitted' && selected.consent?.gemma_processing && !selected.ai_review && <div className="support-owner-note">Publication is waiting for the consented Gemma safety review. Run the review above; an owner can then approve and publish the campaign in one step.</div>}
           {selected.ai_review && <div className="support-review"><strong>Gemma recommendation</strong><p>{selected.ai_review.recommended_action}</p>{selected.ai_review.consistency_flags.length > 0 && <small>Flags: {selected.ai_review.consistency_flags.join(' · ')}</small>}</div>}
           <h3>Guardian portal access</h3>
           <p className="muted-action">Invitations expire after 72 hours, work once, and require the guardian&apos;s registered email.</p>

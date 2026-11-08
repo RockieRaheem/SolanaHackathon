@@ -274,10 +274,10 @@ pnpm.cmd dev
 The services are normally available at:
 
 - Web: `http://localhost:3000`
-- FastAPI: `http://localhost:4100`
-- OpenAPI: `http://localhost:4100/docs`
-- Liveness: `http://localhost:4100/health`
-- Database readiness: `http://localhost:4100/health/readiness`
+- FastAPI: `http://localhost:4101`
+- OpenAPI: `http://localhost:4101/docs`
+- Liveness: `http://localhost:4101/health`
+- Database readiness: `http://localhost:4101/health/readiness`
 
 On Windows, use `npm.cmd` or `pnpm.cmd` if PowerShell blocks the `.ps1` launcher. Do not weaken the machine-wide execution policy just to start the project.
 

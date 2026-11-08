@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { backendApiOrigin } from '@/lib/api/server';
+import { backendFetch } from '@/lib/api/server';
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
@@ -9,15 +9,14 @@ async function forward(request: NextRequest, context: RouteContext) {
   if (!suffix || suffix.includes('..')) {
     return NextResponse.json({ detail: 'Public support route not found' }, { status: 404 });
   }
-  const target = new URL(`/api/v1/support/public/${suffix}${request.nextUrl.search}`, backendApiOrigin());
+  const backendPath = `/api/v1/support/public/${suffix}${request.nextUrl.search}`;
   const headers = new Headers({ Accept: 'application/json' });
   const contentType = request.headers.get('content-type');
   if (contentType) headers.set('Content-Type', contentType);
-  const response = await fetch(target, {
+  const response = await backendFetch(backendPath, {
     method: request.method,
     headers,
     body: request.method === 'POST' ? await request.arrayBuffer() : undefined,
-    cache: 'no-store',
   });
   return new NextResponse(response.body, {
     status: response.status,

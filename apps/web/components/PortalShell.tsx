@@ -2,12 +2,8 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Bot, LogOut, PanelsTopLeft } from 'lucide-react';
-import { clearClientResponseCache } from '@/lib/api/client';
-import { clearPeriods } from '@/lib/period';
-import { clearPrimarySchool } from '@/lib/school';
-import { createClient } from '@/lib/supabase/client';
+import { signOutAndRedirect } from '@/lib/sign-out';
 import NotificationCenter from '@/components/NotificationCenter';
 
 export default function PortalShell({
@@ -17,15 +13,8 @@ export default function PortalShell({
   label:string;
   children:React.ReactNode;
 }) {
-  const router = useRouter();
-
   async function signOut() {
-    await createClient().auth.signOut();
-    clearClientResponseCache();
-    clearPeriods();
-    clearPrimarySchool();
-    router.replace('/login');
-    router.refresh();
+    await signOutAndRedirect();
   }
   return <div className="portal-page">
     <header className="portal-header">

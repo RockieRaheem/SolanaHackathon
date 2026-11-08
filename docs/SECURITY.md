@@ -11,6 +11,23 @@
 - Financial and requirements audit events record the authenticated user's email or immutable user ID.
 - Academic periods are tenant-owned, expose only one operational period per school, and use database triggers to reject enrollment, billing, requirements, and payment mutations after closure.
 - Browser code receives only the Supabase publishable key; database and service-role credentials stay server-side.
+- Authentication uses Supabase SSR cookies and PKCE; protected pages validate signed claims before rendering.
+- Credential, recovery, and logout mutations are same-origin, size-limited, non-cacheable server routes.
+- Password creation and reset require 12 characters with uppercase, lowercase, numeric, and symbol characters.
+- Login, signup, and recovery endpoints apply application-level IP-plus-account throttling in addition to Supabase rate limits.
+- Signup and recovery responses avoid disclosing whether an email address already has an account.
+- Password recovery invalidates all existing sessions and requires a fresh login.
+- Global response headers deny framing, MIME sniffing, unnecessary browser capabilities, and unsafe referrer disclosure.
+
+## Required Supabase production settings
+
+- Keep **Confirm email** enabled and configure a production SMTP provider; the built-in sender is for development only.
+- Match the dashboard password policy to the application: minimum 12 characters with uppercase, lowercase, number, and symbol.
+- Enable leaked-password protection where the Supabase plan supports it.
+- Configure only exact production and local `/auth/callback` redirect URLs; never use wildcard production redirects.
+- Enable security notification emails for password and identity changes.
+- Review Auth rate limits and enable Cloudflare Turnstile or hCaptcha before public launch.
+- Require MFA and a short session inactivity timeout for owners, bursars, and other privileged users before real deployment.
 
 Verification lives in `tests/test_tenant_authorization.py` and
 `scripts/verify_tenant_security.py`; academic-period controls are verified by

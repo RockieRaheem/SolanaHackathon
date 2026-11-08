@@ -1,12 +1,10 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { safeNextPath } from '@/lib/auth-policy';
 import { getSupabaseConfig } from '@/lib/supabase/config';
 
 type PendingCookie = { name:string; value:string; options:CookieOptions };
 
-function safeNext(value:string|null) {
-  return value?.startsWith('/') && !value.startsWith('//') ? value : '/workspace';
-}
 
 function loginError(request:NextRequest, code:string) {
   const loginUrl = new URL('/login', request.nextUrl.origin);
@@ -38,7 +36,7 @@ export async function GET(request:NextRequest) {
     return loginError(request, error.code === 'flow_state_expired' ? 'flow_state_expired' : 'oauth_failed');
   }
 
-  const response = NextResponse.redirect(new URL(safeNext(request.nextUrl.searchParams.get('next')), request.nextUrl.origin));
+  const response = NextResponse.redirect(new URL(safeNextPath(request.nextUrl.searchParams.get('next')), request.nextUrl.origin));
   pendingCookies.forEach(cookie => response.cookies.set(cookie.name, cookie.value, cookie.options));
   return response;
 }

@@ -1,15 +1,13 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { safeNextPath } from '@/lib/auth-policy';
 import { getSupabaseConfig } from '@/lib/supabase/config';
 
 type PendingCookie = { name:string; value:string; options:CookieOptions };
 
-function safeNext(value:string|null) {
-  return value?.startsWith('/') && !value.startsWith('//') ? value : '/workspace';
-}
 
 export async function GET(request:NextRequest) {
-  const next = safeNext(request.nextUrl.searchParams.get('next'));
+  const next = safeNextPath(request.nextUrl.searchParams.get('next'));
   const callbackUrl = new URL('/auth/callback', request.nextUrl.origin);
   callbackUrl.searchParams.set('next', next);
   const pendingCookies:PendingCookie[] = [];

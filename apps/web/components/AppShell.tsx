@@ -10,6 +10,7 @@ import { clearPrimarySchool, getPrimarySchool, SchoolLoadError } from '@/lib/sch
 import { AcademicPeriod, clearPeriods, getAcademicPeriods, getSelectedPeriod, selectPeriod } from '@/lib/period';
 import { getDashboardBootstrap } from '@/lib/dashboard';
 import { createClient } from '@/lib/supabase/client';
+import { signOutAndRedirect } from '@/lib/sign-out';
 
 const navGroups = [
   { label: 'Overview', items: [
@@ -68,7 +69,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       ? getDashboardBootstrap().then(result => [result.school, result.periods] as const)
       : Promise.all([getPrimarySchool(), getAcademicPeriods()]);
     workspace.then(async ([school, rows]) => {
-      setSchoolName(school.name); if (school.role) setUserRole(school.role);
+      setSchoolName(school.unit_name ?? school.name); if (school.role) setUserRole(school.role);
       setPeriods(rows);
       if (rows.length) setPeriodId((await getSelectedPeriod()).id);
     }).catch(reason => {
@@ -105,11 +106,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [authRoute, portalRoute, publicRoute, router]);
 
   async function signOut() {
-    clearPrimarySchool();
-    clearPeriods();
-    await createClient().auth.signOut();
-    router.replace('/login');
-    router.refresh();
+    await signOutAndRedirect();
   }
 
   async function changePeriod(value: string) {

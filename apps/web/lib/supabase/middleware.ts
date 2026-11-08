@@ -2,8 +2,8 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSupabaseConfig } from './config';
 
-const publicRoutes = ['/login', '/signup', '/forgot-password', '/auth/google', '/auth/password', '/auth/callback', '/auth/error', '/support', '/api/support'];
-const sessionFreeRoutes = ['/auth/google', '/auth/password', '/auth/callback', '/auth/error', '/support', '/api/support'];
+const publicRoutes = ['/login', '/signup', '/forgot-password', '/auth/google', '/auth/password', '/auth/callback', '/auth/recovery', '/auth/signout', '/auth/error', '/support', '/api/support'];
+const sessionFreeRoutes = ['/auth/google', '/auth/password', '/auth/callback', '/auth/recovery', '/auth/signout', '/auth/error', '/support', '/api/support'];
 
 function isPublicRoute(pathname: string) {
   return publicRoutes.some((route) => pathname === route || pathname.startsWith(`${route}/`));

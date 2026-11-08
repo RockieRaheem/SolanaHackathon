@@ -190,7 +190,7 @@ Redis and RabbitMQ are present in the local Compose file for planned background 
 3. Configure at least these values in `.env`:
 
    ```dotenv
-   API_URL=http://localhost:4100
+   API_URL=http://localhost:4101
    NEXT_PUBLIC_SUPABASE_URL=https://PROJECT_REF.supabase.co
    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_REPLACE_ME
    SUPABASE_URL=https://PROJECT_REF.supabase.co
@@ -230,10 +230,10 @@ Redis and RabbitMQ are present in the local Compose file for planned background 
    | Service | Address |
    | --- | --- |
    | Web application | <http://localhost:3000> |
-   | FastAPI service | <http://localhost:4100> |
-   | API documentation | <http://localhost:4100/docs> |
-   | Liveness | <http://localhost:4100/health> |
-   | Database readiness | <http://localhost:4100/health/readiness> |
+   | FastAPI service | <http://localhost:4101> |
+   | API documentation | <http://localhost:4101/docs> |
+   | Liveness | <http://localhost:4101/health> |
+   | Database readiness | <http://localhost:4101/health/readiness> |
 
 ## Supabase authentication
 

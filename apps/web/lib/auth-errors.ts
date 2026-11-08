@@ -8,6 +8,7 @@ const messages: Record<string, string> = {
   flow_state_expired: 'This sign-in attempt expired. Please start again.',
   flow_state_not_found: 'This sign-in attempt could not be verified. Please start again.',
   invalid_credentials: 'The email address or password is incorrect.',
+  invalid_origin: 'This request could not be verified. Refresh the page and try again.',
   oauth_failed: 'Google could not complete the sign-in. Please try again.',
   oauth_timeout: 'Google sign-in took too long. Please start again.',
   over_email_send_rate_limit: 'Too many emails were requested. Wait a few minutes before trying again.',
@@ -16,7 +17,10 @@ const messages: Record<string, string> = {
   signup_disabled: 'New account registration is currently closed.',
   user_already_exists: 'An account already exists for this email address. Sign in instead.',
   user_banned: 'This account cannot sign in. Contact your administrator for assistance.',
-  weak_password: 'Choose a stronger password with at least 10 characters, including a letter and a number.',
+  password_same_as_old: 'Choose a password you have not used for this account.',
+  reauthentication_needed: 'For your security, sign in again before changing the password.',
+  same_password: 'Choose a password you have not used for this account.',
+  weak_password: 'Use at least 12 characters with uppercase, lowercase, a number and a symbol.',
 };
 
 export function authMessage(reason: unknown, fallback = 'We could not complete that request. Please try again.') {

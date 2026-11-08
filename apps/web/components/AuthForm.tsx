@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Eye, EyeOff, LoaderCircle, LockKeyhole, Mail } from 'lucide-react';
 import { FormEvent, useState } from 'react';
 import { authMessage } from '@/lib/auth-errors';
+import { passwordProblem } from '@/lib/auth-policy';
 import { markSessionRecovered } from '@/lib/api/client';
 import { clearPrimarySchool } from '@/lib/school';
 import { clearPeriods } from '@/lib/period';
@@ -22,12 +23,6 @@ function GoogleLogo() {
     <path fill="#FBBC05" d="M3.963 10.706A5.41 5.41 0 0 1 3.682 9c0-.592.102-1.168.281-1.706V4.962H.956A9 9 0 0 0 0 9c0 1.452.347 2.827.956 4.038l3.007-2.332Z" />
     <path fill="#EA4335" d="M9 3.58c1.321 0 2.507.454 3.441 1.346l2.581-2.581C13.464.892 11.427 0 9 0A9 9 0 0 0 .956 4.962l3.007 2.332C4.672 5.165 6.656 3.58 9 3.58Z" />
   </svg>;
-}
-
-function passwordProblem(password: string) {
-  if (password.length < 10) return 'Use at least 10 characters for your password.';
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return 'Include at least one letter and one number.';
-  return '';
 }
 
 export default function AuthForm({ mode, nextPath = '/dashboard', initialError = '' }: AuthFormProps) {
@@ -74,7 +69,7 @@ export default function AuthForm({ mode, nextPath = '/dashboard', initialError =
         clearPeriods();
         window.location.replace(nextPath);
       } else {
-        setNotice(`We sent a confirmation link to ${email}. Open it on this device to finish creating your account.`);
+        setNotice('If this address can be registered, a confirmation link has been sent. Open it on this device to continue.');
       }
     } catch (reason) {
       const localMessage = reason instanceof Error ? reason.message : '';
@@ -124,8 +119,8 @@ export default function AuthForm({ mode, nextPath = '/dashboard', initialError =
         <form className="auth-form" onSubmit={submit}>
           {!isLogin && <label>Full name<input name="fullName" autoComplete="name" required placeholder="Your full name" /></label>}
           <label>Email address<div className="auth-input"><Mail size={17} /><input name="email" type="email" autoComplete="email" required placeholder="name@school.ac.ug" /></div></label>
-          <label>Password<div className="auth-input"><LockKeyhole size={17} /><input name="password" type={showPassword ? 'text' : 'password'} autoComplete={isLogin ? 'current-password' : 'new-password'} minLength={isLogin ? 6 : 10} required placeholder={isLogin ? 'Your password' : '10+ characters, including a number'} /><button type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>{!isLogin && <small className="password-guidance">Use 10 or more characters with at least one letter and one number.</small>}</label>
-          {!isLogin && <label>Confirm password<input name="confirmation" type={showPassword ? 'text' : 'password'} autoComplete="new-password" minLength={10} required placeholder="Repeat your password" /></label>}
+          <label>Password<div className="auth-input"><LockKeyhole size={17} /><input name="password" type={showPassword ? 'text' : 'password'} autoComplete={isLogin ? 'current-password' : 'new-password'} minLength={isLogin ? 6 : 12} required placeholder={isLogin ? 'Your password' : '12+ characters with upper/lowercase, number and symbol'} /><button type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>{!isLogin && <small className="password-guidance">Use 12 or more characters with uppercase, lowercase, a number and a symbol.</small>}</label>
+          {!isLogin && <label>Confirm password<input name="confirmation" type={showPassword ? 'text' : 'password'} autoComplete="new-password" minLength={12} required placeholder="Repeat your password" /></label>}
           <button className="auth-submit" disabled={busy || googleBusy}>{busy && <LoaderCircle className="spin" size={18} />}{isLogin ? 'Sign in' : 'Create account'}</button>
         </form>
 

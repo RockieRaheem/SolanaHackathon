@@ -1691,7 +1691,7 @@ def _expire_abandoned_solana_intents(session: Session, case_id: uuid.UUID) -> No
                 school_id=pledge.school_id,
                 entity_type="support_pledge",
                 entity_id=pledge.id,
-                action="solana_intent_expired",
+                action="solana_intent_expire",
                 actor="system:solana-checkout",
                 summary=f"Released expired checkout {pledge.public_reference}",
             )
@@ -1793,7 +1793,7 @@ def _create_solana_intent(
             school_id=support_case.school_id,
             entity_type="support_pledge",
             entity_id=pledge.id,
-            action="solana_intent_created",
+            action="solana_intent_new",
             actor=(str(donor_user_id) if donor_user_id else "public:donor"),
             summary=f"Created exact Solana checkout for {pledge.public_reference}",
         )
@@ -1857,7 +1857,7 @@ def _confirm_solana_intent(
                 school_id=pledge.school_id,
                 entity_type="support_pledge",
                 entity_id=pledge.id,
-                action="solana_intent_expired",
+                action="solana_intent_expire",
                 actor="system:solana-checkout",
                 summary=f"Released expired checkout {pledge.public_reference}",
             )

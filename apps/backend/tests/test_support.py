@@ -1388,6 +1388,15 @@ def test_verified_solana_donation_posts_once_and_rejects_replay(
     assert intent_payload["public_reference"] == retried.json()["public_reference"]
     assert intent_payload["expected_lamports"] == 133333333
     assert intent_payload["memo"].endswith(intent_payload["public_reference"])
+    with Session(engine) as session:
+        checkout_audit = session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.entity_type == "support_pledge",
+                AuditEvent.action == "solana_intent_new",
+            )
+        )
+        assert checkout_audit is not None
+        assert len(checkout_audit.action) <= 20
 
     sender, signature = "7" * 44, "3" * 88
     monkeypatch.setattr(

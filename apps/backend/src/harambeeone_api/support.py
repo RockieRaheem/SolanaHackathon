@@ -3,7 +3,7 @@ import binascii
 import hashlib
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -51,10 +51,13 @@ from harambeeone_api.models import (
 from harambeeone_api.periods import resolve_period
 from harambeeone_api.schemas import (
     GuardianAcknowledgementCreate,
+    GuardianCampaignMediaSubmit,
     GuardianSupportCaseSave,
+    GuardianSupportReferralCreate,
     SupportAiReviewCreate,
     SupportAttestationCreate,
     SupportAttestationReview,
+    SupportCampaignMediaDecision,
     SupportCaseCreate,
     SupportCaseReviewDecision,
     SupportConsentCreate,
@@ -79,6 +82,7 @@ from harambeeone_api.support_assistants import (
     request_gemma_json,
     start_assistant_usage,
 )
+from harambeeone_api.support_media import CampaignMediaError, sanitize_campaign_image
 from harambeeone_api.support_notifications import emit_support_notification
 
 router = APIRouter(prefix="/api/v1/support", tags=["learner support"])
@@ -236,6 +240,25 @@ def _guardian_case_payload(session: Session, support_case: SupportCase) -> dict:
         "review_notes": support_case.review_notes,
         "submitted_at": support_case.submitted_at,
         "reviewed_at": support_case.reviewed_at,
+        "media": _media_payload(session, support_case.id),
+    }
+
+
+def _media_payload(session: Session, case_id: uuid.UUID) -> dict | None:
+    media = session.scalar(
+        select(SupportCampaignMedia).where(SupportCampaignMedia.case_id == case_id)
+    )
+    if media is None or media.status == "removed":
+        return None
+    return {
+        "status": media.status,
+        "alt_text": media.alt_text,
+        "width": media.width,
+        "height": media.height,
+        "byte_size": media.byte_size,
+        "review_note": media.review_note,
+        "submitted_at": media.submitted_at,
+        "approved_at": media.approved_at,
     }
 
 
@@ -991,6 +1014,89 @@ def list_school_referrals(
     return [_referral_payload(session, item) for item in rows]
 
 
+@router.post("/guardian/referrals", status_code=status.HTTP_201_CREATED)
+def create_guardian_support_referral(
+    payload: GuardianSupportReferralCreate,
+    user: AuthenticatedUser = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    linked = session.execute(
+        select(GuardianLink, Student)
+        .join(GuardianAccountLink, GuardianAccountLink.guardian_link_id == GuardianLink.id)
+        .join(Student, Student.id == GuardianLink.student_id)
+        .where(
+            GuardianAccountLink.auth_user_id == user.id,
+            Student.id == payload.student_id,
+            Student.school_id == GuardianAccountLink.school_id,
+        )
+    ).one_or_none()
+    if linked is None:
+        raise HTTPException(status_code=404, detail="Linked learner account not found")
+    guardian, student = linked
+    period = resolve_period(session, school_id=student.school_id, writable=True)
+    existing = session.scalar(
+        select(SupportReferral).where(
+            SupportReferral.student_id == student.id,
+            SupportReferral.period_id == period.id,
+        )
+    )
+    if existing:
+        if existing.guardian_link_id != guardian.id:
+            raise HTTPException(status_code=409, detail="Support is already under review")
+        return _referral_payload(session, existing)
+    outstanding, _label = _obligation_balance(
+        session,
+        school_id=student.school_id,
+        period_id=period.id,
+        student_id=student.id,
+        requirement_assignment_id=None,
+    )
+    if outstanding <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="This learner has no verified balance in the current period",
+        )
+    days_due = max((date.today() - period.due_date).days, 0)
+    referral = SupportReferral(
+        school_id=student.school_id,
+        period_id=period.id,
+        student_id=student.id,
+        guardian_link_id=guardian.id,
+        outstanding_snapshot=outstanding,
+        overdue_since=period.due_date,
+        days_overdue_snapshot=days_due,
+        priority_band="urgent" if days_due >= 60 else "high" if days_due >= 30 else "watch",
+        priority_reasons=json.dumps(["Guardian requested support for a verified balance"]),
+        created_by=user.email or str(user.id),
+    )
+    session.add(referral)
+    session.flush()
+    session.add(
+        AuditEvent(
+            school_id=student.school_id,
+            entity_type="support_referral",
+            entity_id=referral.id,
+            action="guardian_requested",
+            actor=user.email or str(user.id),
+            summary="Guardian started a private request from a verified learner balance",
+        )
+    )
+    emit_support_notification(
+        session,
+        school_id=student.school_id,
+        recipient_type="school",
+        event_type="guardian_support_requested",
+        title="Guardian requested learner support",
+        body="A linked guardian started a private request backed by a verified balance.",
+        href="/support-admin",
+        related_type="support_referral",
+        related_id=referral.id,
+        dedup_key=f"referral:{referral.id}:guardian-requested:school",
+    )
+    session.commit()
+    return _referral_payload(session, referral)
+
+
 @router.get("/guardian/referrals")
 def list_guardian_referrals(
     user: AuthenticatedUser = Depends(get_current_user),
@@ -1171,6 +1277,103 @@ def save_guardian_support_case(
     return _guardian_case_payload(session, support_case)
 
 
+@router.post("/guardian/referrals/{referral_id}/media")
+def submit_guardian_campaign_media(
+    referral_id: uuid.UUID,
+    payload: GuardianCampaignMediaSubmit,
+    user: AuthenticatedUser = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    referral = _guardian_referral(session, referral_id, user.id)
+    if not referral.public_identity_consent or not referral.public_media_consent:
+        raise HTTPException(
+            status_code=409,
+            detail="Give separate consent for identified publication and a learner photo first",
+        )
+    if referral.child_assent_status == "declined":
+        raise HTTPException(status_code=409, detail="The learner declined publication")
+    support_case = session.scalar(
+        select(SupportCase).where(
+            SupportCase.referral_id == referral.id,
+            SupportCase.guardian_auth_user_id == user.id,
+        )
+    )
+    if support_case is None:
+        raise HTTPException(status_code=409, detail="Save the private case before adding a photo")
+    if support_case.status not in {"draft", "changes_requested"}:
+        raise HTTPException(
+            status_code=409,
+            detail="The photo cannot change while the school is reviewing this case",
+        )
+    try:
+        image = sanitize_campaign_image(payload.image_base64, payload.image_mime_type)
+    except CampaignMediaError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    media = session.scalar(
+        select(SupportCampaignMedia).where(SupportCampaignMedia.case_id == support_case.id)
+    )
+    if media is None:
+        media = SupportCampaignMedia(case_id=support_case.id, school_id=referral.school_id)
+        session.add(media)
+    media.content = image.content
+    media.mime_type = image.mime_type
+    media.content_hash = image.content_hash
+    media.alt_text = payload.alt_text.strip()
+    media.width = image.width
+    media.height = image.height
+    media.byte_size = len(image.content)
+    media.status = "pending"
+    media.submitted_by = user.email or str(user.id)
+    media.submitted_at = datetime.now(UTC)
+    media.approved_by = None
+    media.approved_at = None
+    media.review_note = None
+    media.removed_by = None
+    media.removed_at = None
+    session.flush()
+    session.add(
+        AuditEvent(
+            school_id=referral.school_id,
+            entity_type="support_campaign_media",
+            entity_id=media.id,
+            action="submitted",
+            actor=user.email or str(user.id),
+            summary=f"Guardian submitted a private learner image for {support_case.public_code}",
+        )
+    )
+    session.commit()
+    return _media_payload(session, support_case.id)
+
+
+@router.get("/guardian/referrals/{referral_id}/media")
+def get_guardian_campaign_media(
+    referral_id: uuid.UUID,
+    user: AuthenticatedUser = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    referral = _guardian_referral(session, referral_id, user.id)
+    support_case = session.scalar(select(SupportCase).where(SupportCase.referral_id == referral.id))
+    if support_case is None:
+        raise HTTPException(status_code=404, detail="Campaign image not found")
+    media = session.scalar(
+        select(SupportCampaignMedia).where(
+            SupportCampaignMedia.case_id == support_case.id,
+            SupportCampaignMedia.status.in_(("pending", "approved", "rejected")),
+        )
+    )
+    if media is None:
+        raise HTTPException(status_code=404, detail="Campaign image not found")
+    return Response(
+        content=media.content,
+        media_type=media.mime_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.post("/guardian/referrals/{referral_id}/case/submit")
 def submit_guardian_support_case(
     referral_id: uuid.UUID,
@@ -1316,8 +1519,10 @@ def withdraw_referral_consent(
         media = session.scalar(
             select(SupportCampaignMedia).where(SupportCampaignMedia.case_id == support_case.id)
         )
-        if media and media.status == "approved":
+        if media and media.status != "removed":
             media.status = "removed"
+            media.content = b""
+            media.byte_size = 0
             media.removed_by = user.email or str(user.id)
             media.removed_at = referral.withdrawn_at
     session.add(
@@ -2097,6 +2302,8 @@ def get_support_case(
         "consent": (
             {
                 "method": consent.method,
+                "public_identity_consent": consent.public_identity_consent,
+                "public_media_consent": consent.public_media_consent,
                 "gemma_processing": consent.gemma_processing,
                 "cross_border_processing": consent.cross_border_processing,
                 "child_assent_status": consent.child_assent_status,
@@ -2106,7 +2313,89 @@ def get_support_case(
             else None
         ),
         "ai_review": json.loads(review.result_json) if review else None,
+        "media": _media_payload(session, case_id),
     }
+
+
+@router.get("/cases/{case_id}/media")
+def get_private_support_campaign_media(
+    case_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    context: SchoolContext = Depends(require_permission("support:read")),
+):
+    _private_case(session, case_id, context.school_id)
+    media = session.scalar(
+        select(SupportCampaignMedia).where(
+            SupportCampaignMedia.case_id == case_id,
+            SupportCampaignMedia.status.in_(("pending", "approved", "rejected")),
+        )
+    )
+    if media is None:
+        raise HTTPException(status_code=404, detail="Campaign image not found")
+    return Response(
+        content=media.content,
+        media_type=media.mime_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"{media.content_hash}"',
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.post("/cases/{case_id}/media/decision")
+def review_support_campaign_media(
+    case_id: uuid.UUID,
+    payload: SupportCampaignMediaDecision,
+    session: Session = Depends(get_session),
+    context: SchoolContext = Depends(require_permission("support:approve")),
+):
+    support_case = _private_case(session, case_id, context.school_id)
+    if support_case.status in {"published", "funded", "closed", "withdrawn"}:
+        raise HTTPException(status_code=409, detail="Media review is closed for this campaign")
+    consent = _active_consent(session, case_id)
+    if consent is None or not consent.public_media_consent:
+        raise HTTPException(status_code=409, detail="Separate guardian photo consent is required")
+    media = session.scalar(
+        select(SupportCampaignMedia).where(SupportCampaignMedia.case_id == case_id)
+    )
+    if media is None or media.status == "removed":
+        raise HTTPException(status_code=404, detail="Campaign image not found")
+    now = datetime.now(UTC)
+    media.review_note = (payload.note or "").strip() or None
+    if payload.action == "approve":
+        media.status = "approved"
+        media.approved_by = context.actor
+        media.approved_at = now
+    else:
+        media.status = "rejected"
+        media.approved_by = None
+        media.approved_at = None
+    session.add(
+        AuditEvent(
+            school_id=context.school_id,
+            entity_type="support_campaign_media",
+            entity_id=media.id,
+            action=media.status,
+            actor=context.actor,
+            summary=f"{media.status.capitalize()} learner image for {support_case.public_code}",
+        )
+    )
+    _notify_guardian(
+        session,
+        support_case,
+        f"campaign_media_{media.status}",
+        "Learner photo approved" if media.status == "approved" else "Learner photo needs changes",
+        (
+            "The school approved the learner photo for publication with this campaign."
+            if media.status == "approved"
+            else media.review_note or "Upload a different learner photo before resubmitting."
+        ),
+        suffix=f":{media.id}:{media.status}",
+    )
+    session.commit()
+    return _media_payload(session, case_id)
 
 
 @router.post("/cases", status_code=status.HTTP_201_CREATED)
@@ -2250,16 +2539,15 @@ def record_support_consent(
         if len(evidence_content) > 3_000_000:
             raise HTTPException(status_code=422, detail="Consent evidence must be 3 MB or smaller")
 
-    photo_content: bytes | None = None
+    photo_image = None
     if payload.campaign_photo_base64:
         try:
-            photo_content = base64.b64decode(payload.campaign_photo_base64, validate=True)
-        except (binascii.Error, ValueError) as error:
-            raise HTTPException(
-                status_code=422, detail="Campaign photo is not valid base64"
-            ) from error
-        if len(photo_content) > 2_000_000:
-            raise HTTPException(status_code=422, detail="Campaign photo must be 2 MB or smaller")
+            photo_image = sanitize_campaign_image(
+                payload.campaign_photo_base64,
+                payload.campaign_photo_mime_type or "",
+            )
+        except CampaignMediaError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     consent = session.scalar(select(SupportConsent).where(SupportConsent.case_id == case_id))
     if consent is None:
@@ -2292,29 +2580,35 @@ def record_support_consent(
     media = session.scalar(
         select(SupportCampaignMedia).where(SupportCampaignMedia.case_id == case_id)
     )
-    if payload.public_media_consent and photo_content:
+    if payload.public_media_consent and photo_image:
         if media is None:
             media = SupportCampaignMedia(
                 case_id=case_id,
                 school_id=context.school_id,
-                content=photo_content,
-                mime_type=payload.campaign_photo_mime_type or "image/jpeg",
-                content_hash=hashlib.sha256(photo_content).hexdigest(),
+                content=photo_image.content,
+                mime_type=photo_image.mime_type,
+                content_hash=photo_image.content_hash,
                 alt_text=(payload.campaign_photo_alt_text or "Learner campaign photograph").strip(),
-                width=0,
-                height=0,
-                byte_size=len(photo_content),
+                width=photo_image.width,
+                height=photo_image.height,
+                byte_size=len(photo_image.content),
+                status="approved",
+                submitted_by=context.actor,
+                submitted_at=datetime.now(UTC),
                 approved_by=context.actor,
+                approved_at=datetime.now(UTC),
             )
             session.add(media)
         else:
-            media.content = photo_content
-            media.mime_type = payload.campaign_photo_mime_type or "image/jpeg"
-            media.content_hash = hashlib.sha256(photo_content).hexdigest()
+            media.content = photo_image.content
+            media.mime_type = photo_image.mime_type
+            media.content_hash = photo_image.content_hash
             media.alt_text = (
                 payload.campaign_photo_alt_text or "Learner campaign photograph"
             ).strip()
-            media.byte_size = len(photo_content)
+            media.width = photo_image.width
+            media.height = photo_image.height
+            media.byte_size = len(photo_image.content)
             media.status = "approved"
             media.approved_by = context.actor
             media.approved_at = datetime.now(UTC)

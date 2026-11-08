@@ -909,6 +909,27 @@ class GuardianSupportCaseSave(BaseModel):
     target_amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
 
 
+class GuardianSupportReferralCreate(BaseModel):
+    student_id: uuid.UUID
+
+
+class GuardianCampaignMediaSubmit(BaseModel):
+    image_base64: str = Field(min_length=100, max_length=2_100_000)
+    image_mime_type: str = Field(pattern="^image/(jpeg|png|webp)$")
+    alt_text: str = Field(min_length=8, max_length=160)
+
+
+class SupportCampaignMediaDecision(BaseModel):
+    action: str = Field(pattern="^(approve|reject)$")
+    note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def require_rejection_note(self):
+        if self.action == "reject" and not (self.note or "").strip():
+            raise ValueError("Explain why the learner photo was rejected")
+        return self
+
+
 class SupportCaseReviewDecision(BaseModel):
     action: str = Field(pattern="^(request_changes|approve)$")
     note: str | None = Field(default=None, max_length=500)
@@ -1168,8 +1189,10 @@ class SupportReferralConsent(BaseModel):
             raise ValueError("Choose anonymous or identified campaign publication")
         if self.public_identity_consent and self.child_assent_status == "declined":
             raise ValueError("Identified publication is not allowed when the learner declines")
-        if self.public_media_consent:
-            raise ValueError("A campaign photo must be recorded and verified by the school")
+        if self.public_media_consent and not self.public_identity_consent:
+            raise ValueError("A public learner photo requires identified publication consent")
+        if self.public_media_consent and self.child_assent_status == "declined":
+            raise ValueError("A learner photo cannot be used when the learner declines")
         if (
             self.child_assent_status in {"not_applicable", "unable_to_express"}
             and not (self.child_assent_reason or "").strip()

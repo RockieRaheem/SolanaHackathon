@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -5,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -1431,6 +1434,134 @@ def test_solana_intent_cannot_be_manually_posted(support_workspace) -> None:
         assert session.get(SupportPledge, pledge_id).status == "pending"
 
 
+def test_guardian_started_campaign_keeps_photo_private_until_owner_approval(
+    support_workspace,
+) -> None:
+    engine, _owner_user_id, ids, client = support_workspace
+    guardian_user_id = uuid.uuid4()
+    with Session(engine) as session:
+        invitation = GuardianInvitation(
+            school_id=ids["school"],
+            guardian_link_id=ids["guardian"],
+            token_hash="b" * 64,
+            invited_email="guardian@example.com",
+            status="accepted",
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+            created_by="owner@example.com",
+            accepted_by_user_id=guardian_user_id,
+            accepted_at=datetime.now(UTC),
+        )
+        session.add(invitation)
+        session.flush()
+        session.add(
+            GuardianAccountLink(
+                school_id=ids["school"],
+                guardian_link_id=ids["guardian"],
+                auth_user_id=guardian_user_id,
+                invitation_id=invitation.id,
+            )
+        )
+        session.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        id=guardian_user_id, email="guardian@example.com"
+    )
+    referral = client.post(
+        "/api/v1/support/guardian/referrals",
+        json={"student_id": str(ids["student"])},
+    )
+    assert referral.status_code == 201, referral.text
+    referral_id = referral.json()["id"]
+
+    consent = client.post(
+        f"/api/v1/support/guardian/referrals/{referral_id}/consent",
+        json={
+            "action": "grant",
+            "guardian_authority_confirmed": True,
+            "age_verification_method": "school_record",
+            "anonymous_publication": False,
+            "public_identity_consent": True,
+            "public_media_consent": True,
+            "gemma_processing": False,
+            "cross_border_processing": False,
+            "child_assent_status": "agreed",
+        },
+    )
+    assert consent.status_code == 200, consent.text
+
+    draft = client.post(
+        f"/api/v1/support/guardian/referrals/{referral_id}/case",
+        json={
+            "title": "Help clear a verified school balance",
+            "public_summary": (
+                "Community support will clear a verified school obligation "
+                "and help the learner continue attending class."
+            ),
+            "private_context": (
+                "The guardian has requested temporary help after a documented "
+                "change in household income."
+            ),
+            "need_category": "fees",
+            "target_amount": 200000,
+        },
+    )
+    assert draft.status_code == 200, draft.text
+    case_id = draft.json()["id"]
+
+    image = Image.new("RGB", (640, 480), color=(73, 121, 86))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    uploaded = client.post(
+        f"/api/v1/support/guardian/referrals/{referral_id}/media",
+        json={
+            "image_base64": base64.b64encode(buffer.getvalue()).decode(),
+            "image_mime_type": "image/png",
+            "alt_text": "Learner standing in the school courtyard",
+        },
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    assert uploaded.json()["status"] == "pending"
+    assert client.get("/api/v1/support/public/campaigns").json() == []
+
+    submitted = client.post(
+        f"/api/v1/support/guardian/referrals/{referral_id}/case/submit"
+    )
+    assert submitted.status_code == 200, submitted.text
+
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        id=_owner_user_id, email="owner@example.com"
+    )
+    detail = client.get(f"/api/v1/support/cases/{case_id}")
+    assert detail.status_code == 200
+    assert detail.json()["media"]["status"] == "pending"
+
+    approved_media = client.post(
+        f"/api/v1/support/cases/{case_id}/media/decision",
+        json={"action": "approve"},
+    )
+    assert approved_media.status_code == 200, approved_media.text
+    assert approved_media.json()["status"] == "approved"
+    approved_case = client.post(
+        f"/api/v1/support/cases/{case_id}/review-decision",
+        json={"action": "approve"},
+    )
+    assert approved_case.status_code == 200, approved_case.text
+    published = client.post(f"/api/v1/support/cases/{case_id}/publish")
+    assert published.status_code == 200, published.text
+
+    public = client.get(
+        f"/api/v1/support/public/campaigns/{published.json()['public_code']}"
+    )
+    assert public.status_code == 200
+    assert public.json()["learner_name"] == "Amina Kato"
+    assert public.json()["learner_photo_url"]
+    public_media = client.get(
+        f"/api/v1/support/public/campaigns/{published.json()['public_code']}/media"
+    )
+    assert public_media.status_code == 200
+    assert public_media.headers["content-type"] == "image/webp"
+
+
 def test_identified_campaign_requires_scoped_consent_and_serves_approved_media(
     support_workspace,
 ) -> None:
@@ -1449,6 +1580,9 @@ def test_identified_campaign_requires_scoped_consent_and_serves_approved_media(
     )
     assert created.status_code == 201, created.text
     case_id = created.json()["id"]
+    campaign_image = Image.new("RGB", (640, 480), color=(68, 112, 82))
+    campaign_buffer = io.BytesIO()
+    campaign_image.save(campaign_buffer, format="PNG")
     consent = client.post(
         f"/api/v1/support/cases/{case_id}/consent",
         json={
@@ -1464,7 +1598,7 @@ def test_identified_campaign_requires_scoped_consent_and_serves_approved_media(
             "evidence_mime_type": "application/pdf",
             "evidence_base64": "c2lnbmVkIGNvbnNlbnQ=",
             "campaign_photo_mime_type": "image/png",
-            "campaign_photo_base64": "cGhvdG8=",
+            "campaign_photo_base64": base64.b64encode(campaign_buffer.getvalue()).decode(),
             "campaign_photo_alt_text": "Learner at the school campus",
         },
     )
@@ -1478,5 +1612,5 @@ def test_identified_campaign_requires_scoped_consent_and_serves_approved_media(
     assert public.json()["learner_photo_url"].endswith(f"/{code}/media")
     media = client.get(f"/api/v1/support/public/campaigns/{code}/media")
     assert media.status_code == 200
-    assert media.headers["content-type"] == "image/png"
-    assert media.content == b"photo"
+    assert media.headers["content-type"] == "image/webp"
+    assert media.content

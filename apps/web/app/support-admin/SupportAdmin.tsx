@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { Bot, CheckCircle2, Copy, ExternalLink, HandHeart, Plus, ShieldCheck, UserRoundPlus, X } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
@@ -14,7 +15,8 @@ type Student = { id:string; admission_no:string; full_name:string };
 type Requirement = { id:string; requirement_name:string; requirement_type:string; outstanding_amount:string };
 type Eligibility = { general_outstanding:string; eligible:boolean };
 type Case = { id:string; public_code:string; student_name:string; admission_no:string; title:string; target_amount:string; verified_amount:string; pending_amount:string; status:string; has_ai_review:boolean; guardian_authored:boolean; review_notes:string|null };
-type Detail = { id:string; public_code:string; student:{name:string;admission_no:string}; title:string; public_summary:string; private_context:string|null; status:string; guardian_authored:boolean; review_notes:string|null; guardians:{id:string;name:string;relationship:string}[]; consent:null|{method:string;gemma_processing:boolean}; ai_review:null|{consistency_flags:string[];recommended_action:string} };
+type CampaignMedia = {status:'pending'|'approved'|'rejected';alt_text:string;review_note:string|null;width:number;height:number};
+type Detail = { id:string; public_code:string; student:{name:string;admission_no:string}; title:string; public_summary:string; private_context:string|null; status:string; guardian_authored:boolean; review_notes:string|null; guardians:{id:string;name:string;relationship:string}[]; consent:null|{method:string;gemma_processing:boolean;public_media_consent:boolean}; media:CampaignMedia|null; ai_review:null|{consistency_flags:string[];recommended_action:string} };
 type Pledge = { id:string; public_reference:string; external_reference:string; donor_display_name:string; amount:string; status:string };
 type Destination = { id:string; channel:string; label:string; provider_name:string; account_name:string; account_reference:string; instructions:string; verification_status:string };
 type Candidate = {student_id:string;student_name:string;admission_no:string;class_name:string;overdue_amount:string;days_overdue:number;priority_band:string;guardian_link_id:string|null;guardian_email:string|null;guardian_portal_linked:boolean;referral_id:string|null;referral_status:string|null};
@@ -211,6 +213,18 @@ export default function SupportAdmin() {
     if (action === 'request_changes' && !note?.trim()) return;
     await mutate(`/api/v1/support/cases/${selected.id}/review-decision`, {action,note}, action === 'approve' ? 'Case approved. It is ready for owner publication.' : 'Changes requested. The guardian can now revise the private draft.');
   }
+  async function reviewMedia(action:'approve'|'reject') {
+    if (!selected?.media) return;
+    const note = action === 'reject' ? window.prompt('Explain what the guardian must change in the photo:') : null;
+    if (action === 'reject' && !note?.trim()) return;
+    await mutate(
+      `/api/v1/support/cases/${selected.id}/media/decision`,
+      {action,note},
+      action === 'approve'
+        ? 'Learner photo approved for this campaign.'
+        : 'Photo returned privately to the guardian with your review note.',
+    );
+  }
   async function inviteGuardian(guardianId:string) {
     if (!school) return;
     setBusy(true); setError(''); setGuardianInvite(null);
@@ -320,6 +334,13 @@ export default function SupportAdmin() {
           <div className="support-admin-progress"><span>1. Consent <b>{selected.consent ? 'Complete' : 'Required'}</b></span><span>2. Submission <b>{selected.guardian_authored ? selected.status : 'Staff assisted'}</b></span><span>3. Safety review <b>{selected.ai_review ? 'Gemma complete' : selected.consent?.gemma_processing ? 'Gemma pending' : 'Manual'}</b></span><span>4. Publication <b>{selected.status}</b></span></div>
           <p>{selected.public_summary}</p>
           {selected.private_context && <div className="support-private-context"><strong>Private guardian context</strong><p>{selected.private_context}</p><small>Never shown on the public donor portal.</small></div>}
+          {selected.media && <section className="support-media-review">
+            <div><strong>Guardian-submitted learner photo</strong><Status tone={selected.media.status === 'approved' ? 'success' : selected.media.status === 'rejected' ? 'danger' : 'warning'}>{selected.media.status}</Status></div>
+            <Image src={`${API}/api/v1/support/cases/${selected.id}/media`} alt={selected.media.alt_text} width={640} height={420} unoptimized/>
+            <p>{selected.media.alt_text}</p>
+            {selected.media.review_note && <small>{selected.media.review_note}</small>}
+            {school?.role === 'owner' && selected.media.status !== 'approved' && <footer><button className="btn" disabled={busy} onClick={() => reviewMedia('reject')}>Request different photo</button><button className="btn primary" disabled={busy} onClick={() => reviewMedia('approve')}>Approve photo</button></footer>}
+          </section>}
           <div className="support-case-actions">
             {!selected.consent && <button className="btn" onClick={() => { setModalError(''); setModal('consent'); }}>Record consent</button>}
             {selected.guardian_authored && selected.status === 'submitted' && ['owner','bursar'].includes(school?.role ?? '') && <button className="btn" disabled={busy} onClick={() => reviewDecision('request_changes')}>Request changes</button>}

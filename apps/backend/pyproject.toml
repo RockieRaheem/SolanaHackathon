@@ -8,6 +8,7 @@ dependencies = [
   "email-validator==2.2.0",
   "fastapi==0.116.1",
   "httpx==0.28.1",
+  "pillow==13.0.0",
   "psycopg[binary]==3.2.9",
   "pydantic-settings==2.10.1",
   "pyjwt[crypto]==2.10.1",

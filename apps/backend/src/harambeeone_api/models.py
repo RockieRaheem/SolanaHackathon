@@ -1928,7 +1928,8 @@ class SupportCampaignMedia(Base):
     __tablename__ = "support_campaign_media"
     __table_args__ = (
         CheckConstraint(
-            "status in ('approved','removed')", name="ck_support_campaign_media_status"
+            "status in ('pending','approved','rejected','removed')",
+            name="ck_support_campaign_media_status",
         ),
         Index("ix_support_campaign_media_school_status", "school_id", "status"),
     )
@@ -1947,11 +1948,12 @@ class SupportCampaignMedia(Base):
     width: Mapped[int]
     height: Mapped[int]
     byte_size: Mapped[int]
-    status: Mapped[str] = mapped_column(String(16), default="approved")
-    approved_by: Mapped[str] = mapped_column(String(120))
-    approved_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    submitted_by: Mapped[str | None] = mapped_column(String(120))
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[str | None] = mapped_column(String(120))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_note: Mapped[str | None] = mapped_column(String(500))
     removed_by: Mapped[str | None] = mapped_column(String(120))
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

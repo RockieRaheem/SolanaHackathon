@@ -32,12 +32,14 @@ from harambeeone_api.models import (
     Payment,
     PaymentAllocation,
     Person,
+    Requirement,
     School,
     SchoolMembership,
     SettlementAnchor,
     SolanaDonationIntent,
     Student,
     StudentFeeAssignment,
+    StudentRequirement,
     SupportAssistantUsage,
     SupportCase,
     SupportNotification,
@@ -288,6 +290,24 @@ def test_guardian_referral_consent_is_scoped_and_withdrawable(support_workspace)
     assert consent.status_code == 200, consent.text
     assert consent.json()["status"] == "consented"
     assert consent.json()["gemma_processing"] is False
+    photo_consent = client.post(
+        f"/api/v1/support/guardian/referrals/{referral_id}/consent",
+        json={
+            "action": "grant",
+            "privacy_notice_version": "2026-11-v2",
+            "guardian_authority_confirmed": True,
+            "age_verification_method": "school_record",
+            "anonymous_publication": False,
+            "public_identity_consent": True,
+            "public_media_consent": True,
+            "gemma_processing": False,
+            "cross_border_processing": False,
+            "child_assent_status": "agreed",
+        },
+    )
+    assert photo_consent.status_code == 200, photo_consent.text
+    assert photo_consent.json()["public_identity_consent"] is True
+    assert photo_consent.json()["public_media_consent"] is True
     with Session(engine) as session:
         campaign = SupportCase(
             school_id=ids["school"],
@@ -458,6 +478,29 @@ def test_guardian_authors_case_school_requests_changes_and_owner_publishes(
             created_by="owner@example.com",
         )
         session.add(referral)
+        requirement = Requirement(
+            school_id=ids["school"],
+            period_id=ids["period"],
+            name="Ream of paper",
+            code="REAM-P7",
+            requirement_type="school_item",
+            academic_year=2026,
+            term=3,
+            amount=Decimal("25000"),
+            quantity=Decimal("1"),
+            unit="ream",
+            status="published",
+        )
+        session.add(requirement)
+        session.flush()
+        session.add(
+            StudentRequirement(
+                requirement_id=requirement.id,
+                student_id=ids["student"],
+                expected_amount=Decimal("25000"),
+                expected_quantity=Decimal("1"),
+            )
+        )
         session.commit()
         referral_id = referral.id
 
@@ -467,6 +510,8 @@ def test_guardian_authors_case_school_requests_changes_and_owner_publishes(
     obligations = client.get(f"/api/v1/support/guardian/referrals/{referral_id}/obligations")
     assert obligations.status_code == 200, obligations.text
     assert Decimal(str(obligations.json()["general"]["outstanding"])) == Decimal("500000")
+    assert obligations.json()["requirements"][0]["label"] == "Ream of paper"
+    assert obligations.json()["requirements"][0]["suggested_category"] == "learning_materials"
     saved = client.post(
         f"/api/v1/support/guardian/referrals/{referral_id}/case",
         json={

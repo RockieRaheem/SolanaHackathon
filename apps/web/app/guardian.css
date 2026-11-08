@@ -34,3 +34,9 @@
 .support-media-review img{width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:8px}
 .support-media-review p,.support-media-review small{margin:0;color:#5f6962;font-size:10px;line-height:1.5}
 .support-media-review footer{display:flex;justify-content:flex-end;gap:8px}
+.photo-consent-upgrade{display:grid;gap:12px;border-top:1px solid #dce4dd;background:#f7faf7}
+.photo-consent-upgrade>div{display:flex;align-items:flex-start;gap:10px}
+.photo-consent-upgrade>div svg{flex:none;color:#3f6b50}
+.photo-consent-upgrade>div p{margin:0;color:#566159;font-size:10px;line-height:1.55}
+.photo-consent-upgrade>div strong{display:block;margin-bottom:3px;color:#1c3d2b}
+.photo-consent-upgrade>.btn{justify-self:start}

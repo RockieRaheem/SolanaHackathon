@@ -131,6 +131,8 @@ def _referral_payload(session: Session, referral: SupportReferral) -> dict:
         "status": referral.status,
         "privacy_notice_version": PRIVACY_NOTICE_VERSION,
         "privacy_notice": PRIVACY_NOTICE,
+        "guardian_authority_confirmed": referral.guardian_authority_confirmed,
+        "age_verification_method": referral.age_verification_method,
         "anonymous_publication": referral.anonymous_publication,
         "public_identity_consent": referral.public_identity_consent,
         "public_media_consent": referral.public_media_consent,
@@ -181,6 +183,25 @@ def _obligation_balance(
         )
     ) or Decimal("0")
     return max(outstanding, Decimal("0")), "School fees / general balance"
+
+
+def _support_need_category(requirement: Requirement) -> str:
+    searchable = " ".join(
+        value.lower()
+        for value in (requirement.name, requirement.code, requirement.description)
+        if value
+    )
+    categories = (
+        ("uniform", ("uniform", "shirt", "sweater", "shoe")),
+        ("learning_materials", ("book", "stationery", "material", "textbook", "ream")),
+        ("meals", ("meal", "lunch", "food")),
+        ("transport", ("transport", "bus", "vehicle")),
+        ("examination", ("exam", "candidate", "assessment")),
+    )
+    for category, keywords in categories:
+        if any(keyword in searchable for keyword in keywords):
+            return category
+    return "other"
 
 
 def _case_live_limit(session: Session, support_case: SupportCase) -> Decimal:
@@ -1156,7 +1177,7 @@ def list_guardian_referral_obligations(
                     "id": assignment.id,
                     "label": requirement.name,
                     "outstanding": outstanding,
-                    "suggested_category": requirement.category,
+                    "suggested_category": _support_need_category(requirement),
                 }
             )
     return {
@@ -1433,8 +1454,21 @@ def decide_referral_consent(
     session: Session = Depends(get_session),
 ):
     referral = _guardian_referral(session, referral_id, user.id)
-    if referral.status not in {"awaiting_consent", "declined"}:
-        raise HTTPException(status_code=409, detail="This consent decision can no longer change")
+    support_case = session.scalar(
+        select(SupportCase).where(SupportCase.referral_id == referral.id)
+    )
+    editable_case = support_case is None or support_case.status in {"draft", "changes_requested"}
+    if referral.status not in {"awaiting_consent", "declined", "consented"} or not editable_case:
+        raise HTTPException(
+            status_code=409,
+            detail="Privacy choices cannot change while the school is reviewing this case",
+        )
+    if referral.status == "consented" and payload.action != "grant":
+        raise HTTPException(
+            status_code=409,
+            detail="Use withdraw consent to stop participation",
+        )
+    updating = referral.status == "consented"
     now = datetime.now(UTC)
     referral.privacy_notice_version = payload.privacy_notice_version
     referral.guardian_authority_confirmed = payload.guardian_authority_confirmed
@@ -1450,14 +1484,41 @@ def decide_referral_consent(
     referral.consented_at = now
     referral.withdrawn_at = None
     referral.status = "consented" if payload.action == "grant" else "declined"
+    if support_case is not None:
+        consent = session.scalar(
+            select(SupportConsent).where(SupportConsent.case_id == support_case.id)
+        )
+        if consent is not None:
+            consent.anonymous_publication = referral.anonymous_publication
+            consent.public_identity_consent = referral.public_identity_consent
+            consent.public_media_consent = referral.public_media_consent
+            consent.gemma_processing = referral.gemma_processing
+            consent.cross_border_processing = referral.cross_border_processing
+            consent.child_assent_status = referral.child_assent_status
+        if not referral.public_media_consent:
+            media = session.scalar(
+                select(SupportCampaignMedia).where(
+                    SupportCampaignMedia.case_id == support_case.id
+                )
+            )
+            if media is not None and media.status != "removed":
+                media.status = "removed"
+                media.content = b""
+                media.byte_size = 0
+                media.removed_by = user.email or str(user.id)
+                media.removed_at = now
     session.add(
         AuditEvent(
             school_id=referral.school_id,
             entity_type="support_referral",
             entity_id=referral.id,
-            action=referral.status,
+            action="consent_updated" if updating else referral.status,
             actor=user.email or str(user.id),
-            summary=f"Guardian {referral.status} private support participation",
+            summary=(
+                "Guardian updated scoped support privacy choices"
+                if updating
+                else f"Guardian {referral.status} private support participation"
+            ),
         )
     )
     emit_support_notification(

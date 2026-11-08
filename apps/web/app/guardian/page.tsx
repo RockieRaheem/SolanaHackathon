@@ -43,9 +43,15 @@ type Referral = {
   priority_band: string;
   status: string;
   privacy_notice: string;
-  gemma_processing: boolean;
-  child_assent_status: string;
+  guardian_authority_confirmed: boolean;
+  age_verification_method: string | null;
+  anonymous_publication: boolean;
+  public_identity_consent: boolean;
   public_media_consent: boolean;
+  gemma_processing: boolean;
+  cross_border_processing: boolean;
+  child_assent_status: string;
+  child_assent_reason: string | null;
   case: SupportCase | null;
 };
 type Obligation = {
@@ -183,6 +189,56 @@ export default function GuardianPage() {
         reason instanceof Error
           ? reason.message
           : "Consent decision could not be saved.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function enablePhotoConsent(
+    event: FormEvent<HTMLFormElement>,
+    item: Referral,
+  ) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/backend/api/v1/support/guardian/referrals/${item.id}/consent`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "grant",
+            privacy_notice_version: "2026-11-v2",
+            guardian_authority_confirmed: item.guardian_authority_confirmed,
+            age_verification_method:
+              item.age_verification_method ?? "guardian_declaration",
+            anonymous_publication: false,
+            public_identity_consent: true,
+            public_media_consent: true,
+            gemma_processing: item.gemma_processing,
+            cross_border_processing: item.cross_border_processing,
+            child_assent_status: item.child_assent_status,
+            child_assent_reason: item.child_assent_reason,
+          }),
+        },
+      );
+      const body = (await safeBody(response)) as
+        (Referral & { detail?: unknown }) | null;
+      if (!response.ok || !body)
+        throw new Error(
+          apiError(body?.detail, "Photo consent could not be saved."),
+        );
+      updateReferral(body);
+      setNotice(
+        "Photo consent recorded. Add the learner photo in the campaign form below.",
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Photo consent could not be saved.",
       );
     } finally {
       setBusy(false);
@@ -414,6 +470,32 @@ export default function GuardianPage() {
                     Withdraw
                   </button>
                 </div>
+                {!item.public_media_consent &&
+                  (!item.case ||
+                    ["draft", "changes_requested"].includes(item.case.status)) && (
+                    <form
+                      className="photo-consent-upgrade"
+                      onSubmit={(event) => enablePhotoConsent(event, item)}
+                    >
+                      <div>
+                        <ShieldCheck />
+                        <p>
+                          <strong>Add a learner photo</strong>
+                          A photo requires identified publication. The learner name
+                          and a school-approved photo will be public, while admission
+                          numbers, contacts and private family information remain hidden.
+                        </p>
+                      </div>
+                      <label className="portal-check">
+                        <input type="checkbox" required />
+                        I separately consent to publishing the learner name and a
+                        school-reviewed learner photograph for this campaign.
+                      </label>
+                      <button className="btn" disabled={busy}>
+                        Save photo consent
+                      </button>
+                    </form>
+                  )}
                 {(!item.case ||
                   ["draft", "changes_requested"].includes(
                     item.case.status,

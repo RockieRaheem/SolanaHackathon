@@ -21,6 +21,7 @@ from harambeeone_api.models import (
     AcademicClass,
     AcademicPeriod,
     AcademicYear,
+    AuditEvent,
     DonorProfile,
     Enrollment,
     FeeStructure,
@@ -528,6 +529,15 @@ def test_guardian_authors_case_school_requests_changes_and_owner_publishes(
     )
     assert saved.status_code == 200, saved.text
     case_id = saved.json()["id"]
+    with Session(engine) as session:
+        draft_audit = session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.entity_type == "support_case",
+                AuditEvent.entity_id == uuid.UUID(case_id),
+            )
+        )
+        assert draft_audit.action == "guardian_draft_new"
+        assert len(draft_audit.action) <= 20
     submitted = client.post(f"/api/v1/support/guardian/referrals/{referral_id}/case/submit")
     assert submitted.status_code == 200
     assert submitted.json()["status"] == "submitted"

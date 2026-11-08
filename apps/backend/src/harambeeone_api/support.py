@@ -1282,7 +1282,7 @@ def save_guardian_support_case(
             school_id=referral.school_id,
             entity_type="support_case",
             entity_id=support_case.id,
-            action="guardian_draft_created" if creating else "guardian_draft_updated",
+            action="guardian_draft_new" if creating else "guardian_draft_edit",
             actor=user.email or str(user.id),
             summary="Guardian saved a private support case draft",
         )

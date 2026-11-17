@@ -29,6 +29,7 @@ export default function PeriodsClient() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [modalError, setModalError] = useState('');
   const [closingPeriod, setClosingPeriod] = useState<AcademicPeriod | null>(null);
   const [readiness, setReadiness] = useState<CloseReadiness | null>(null);
   const [checkingClose, setCheckingClose] = useState(false);
@@ -69,30 +70,50 @@ export default function PeriodsClient() {
   }
 
   async function createYear(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!school) return; setSaving(true); setError('');
+    event.preventDefault(); if (!school) return; setSaving(true); setModalError('');
     const form = new FormData(event.currentTarget);
     const year = Number(form.get('year'));
-    const response = await fetch(`${API}/api/v1/academic-years`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ school_id: school.id, name: form.get('name'), year, start_date: form.get('start_date'), end_date: form.get('end_date'), periods: terms.map((term, index) => ({ ...term, sequence: index + 1 })) }) });
-    if (!response.ok) { const body = await response.json(); setError(typeof body.detail === 'string' ? body.detail : 'Check the calendar dates.'); setSaving(false); return; }
-    setOpen(false); setTerms(blankTerms()); setSaving(false); await load();
+    try {
+      const response = await fetch(`${API}/api/v1/academic-years`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ school_id: school.id, name: form.get('name'), year, start_date: form.get('start_date'), end_date: form.get('end_date'), periods: terms.map((term, index) => ({ ...term, sequence: index + 1 })) }) });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(responseError(body, 'Check the calendar dates.'));
+      setOpen(false); setTerms(blankTerms()); await load();
+    } catch (reason) {
+      setModalError(reason instanceof Error ? reason.message : 'The academic year could not be created.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function transition(period: AcademicPeriod, status: 'open'|'closing'|'closed', confirmed = false) {
     if (period.status === 'closing' && status === 'closed' && !confirmed) { await reviewClose(period); return false; }
     let reason: string | undefined;
     if (period.status === 'closed') { reason = window.prompt('Why is this closed period being reopened?')?.trim(); if (!reason) return; }
-    const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/transition`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, reason }) });
-    const body = await response.json() as TransitionResult & {detail?:string|{message?:string}};
-    if (!response.ok) { setError(typeof body.detail === 'string' ? body.detail : body.detail?.message ?? 'Unable to change period status.'); return false; }
-    clearPeriods(); await selectPeriod(period.id); await load();
-    return body;
+    try {
+      const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/transition`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, reason }) });
+      const body = await response.json().catch(() => null) as (TransitionResult & {detail?:string|{message?:string}})|null;
+      if (!response.ok || !body) throw new Error(responseError(body, 'Unable to change period status.'));
+      clearPeriods(); await selectPeriod(period.id); await load();
+      return body;
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Unable to change period status.');
+      return false;
+    }
   }
 
   async function reviewClose(period: AcademicPeriod) {
     setClosingPeriod(period); setReadiness(null); setCheckingClose(true); setError('');
-    const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/close-readiness`, {cache:'no-store'});
-    if (!response.ok) { const body = await response.json().catch(() => null); setError(typeof body?.detail === 'string' ? body.detail : 'The pre-close checklist could not be loaded.'); setClosingPeriod(null); setCheckingClose(false); return; }
-    setReadiness(await response.json()); setCheckingClose(false);
+    try {
+      const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/close-readiness`, {cache:'no-store'});
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body) throw new Error(responseError(body, 'The pre-close checklist could not be loaded.'));
+      setReadiness(body as CloseReadiness);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'The pre-close checklist could not be loaded.');
+      setClosingPeriod(null);
+    } finally {
+      setCheckingClose(false);
+    }
   }
 
   async function closeReviewedPeriod() {
@@ -105,39 +126,58 @@ export default function PeriodsClient() {
 
   async function viewCloseSummary(period: AcademicPeriod) {
     setSummaryPeriod(period); setCloseSummary(null); setCheckingClose(true); setError('');
-    const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/close-summary`, {cache:'no-store'});
-    const body = await response.json().catch(() => null) as CloseSummary|{detail?:string}|null;
-    if (!response.ok) { setError((body as {detail?:string}|null)?.detail ?? 'The closing summary could not be loaded.'); setSummaryPeriod(null); setCheckingClose(false); return; }
-    setCloseSummary(body as CloseSummary); setCheckingClose(false);
+    try {
+      const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/close-summary`, {cache:'no-store'});
+      const body = await response.json().catch(() => null) as CloseSummary|{detail?:string}|null;
+      if (!response.ok || !body) throw new Error(responseError(body, 'The closing summary could not be loaded.'));
+      setCloseSummary(body as CloseSummary);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'The closing summary could not be loaded.');
+      setSummaryPeriod(null);
+    } finally {
+      setCheckingClose(false);
+    }
   }
 
   async function reviewCarry(period: AcademicPeriod) {
     setCarrySource(period); setCarryPreview(null); setCarrySummary(null); setCheckingCarry(true); setError('');
-    if (period.balance_carried_forward) {
-      const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/carry-forward`, {cache:'no-store'});
+    try {
+      if (period.balance_carried_forward) {
+        const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/carry-forward`, {cache:'no-store'});
+        const body = await response.json().catch(() => null);
+        if (!response.ok || !body) throw new Error(responseError(body,'The balance carry summary could not be loaded.'));
+        setCarrySummary(body as CarrySummary);
+        return;
+      }
+      const destination = nextConfiguredPeriod(period);
+      if (!destination) throw new Error('Create the next academic period before carrying balances.');
+      setCarryDestination(destination);
+      const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/carry-forward-preview?destination_period_id=${encodeURIComponent(destination.id)}`, {cache:'no-store'});
       const body = await response.json().catch(() => null);
-      if (!response.ok) { setError(responseError(body,'The balance carry summary could not be loaded.')); setCarrySource(null); }
-      else setCarrySummary(body as CarrySummary);
-      setCheckingCarry(false); return;
+      if (!response.ok || !body) throw new Error(responseError(body,'The balance carry preview could not be prepared.'));
+      if (body.already_posted) setCarrySummary(body.carry_forward as CarrySummary);
+      else setCarryPreview(body as CarryPreview);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'The balance carry review could not be loaded.');
+      setCarrySource(null);
+    } finally {
+      setCheckingCarry(false);
     }
-    const destination = nextConfiguredPeriod(period);
-    if (!destination) { setError('Create the next academic period before carrying balances.'); setCarrySource(null); setCheckingCarry(false); return; }
-    setCarryDestination(destination);
-    const response = await fetch(`${API}/api/v1/academic-periods/${period.id}/carry-forward-preview?destination_period_id=${encodeURIComponent(destination.id)}`, {cache:'no-store'});
-    const body = await response.json().catch(() => null);
-    if (!response.ok) { setError(responseError(body,'The balance carry preview could not be prepared.')); setCarrySource(null); }
-    else if (body.already_posted) setCarrySummary(body.carry_forward as CarrySummary);
-    else setCarryPreview(body as CarryPreview);
-    setCheckingCarry(false);
   }
 
   async function postCarry() {
     if (!carrySource || !carryDestination || !carryPreview?.ready_to_post) return;
     setPostingCarry(true); setError('');
-    const response = await fetch(`${API}/api/v1/academic-periods/${carrySource.id}/carry-forward`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({destination_period_id:carryDestination.id,idempotency_key:`carry:${carrySource.id}:${carryDestination.id}`})});
-    const body = await response.json().catch(() => null);
-    if (!response.ok) { setError(responseError(body,'Balances could not be carried forward.')); setPostingCarry(false); return; }
-    setCarrySummary(body as CarrySummary); setCarryPreview(null); setPostingCarry(false); clearPeriods(); await load();
+    try {
+      const response = await fetch(`${API}/api/v1/academic-periods/${carrySource.id}/carry-forward`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({destination_period_id:carryDestination.id,idempotency_key:`carry:${carrySource.id}:${carryDestination.id}`})});
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body) throw new Error(responseError(body,'Balances could not be carried forward.'));
+      setCarrySummary(body as CarrySummary); setCarryPreview(null); clearPeriods(); await load();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Balances could not be carried forward.');
+    } finally {
+      setPostingCarry(false);
+    }
   }
 
   function closeCarry() {
@@ -146,27 +186,39 @@ export default function PeriodsClient() {
 
   async function remove(period: AcademicPeriod) {
     if (!window.confirm(`Delete unused draft period “${period.name}”?`)) return;
-    const response = await fetch(`${API}/api/v1/academic-periods/${period.id}`, { method: 'DELETE' });
-    if (!response.ok) { const body = await response.json(); setError(body.detail ?? 'Unable to delete period.'); return; }
-    await load();
+    try {
+      const response = await fetch(`${API}/api/v1/academic-periods/${period.id}`, { method: 'DELETE' });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(responseError(body, 'Unable to delete period.'));
+      await load();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Unable to delete period.');
+    }
   }
 
   async function correct(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!editing) return; setSaving(true);
+    event.preventDefault(); if (!editing) return; setSaving(true); setModalError('');
     const form = new FormData(event.currentTarget);
-    const response = await fetch(`${API}/api/v1/academic-periods/${editing.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: form.get('name'), opening_date: form.get('opening_date'), due_date: form.get('due_date'), closing_date: form.get('closing_date') }) });
-    if (!response.ok) { const body = await response.json(); setError(body.detail ?? 'Unable to save correction.'); setSaving(false); return; }
-    setEditing(null); setSaving(false); await load();
+    try {
+      const response = await fetch(`${API}/api/v1/academic-periods/${editing.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: form.get('name'), opening_date: form.get('opening_date'), due_date: form.get('due_date'), closing_date: form.get('closing_date') }) });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(responseError(body, 'Unable to save correction.'));
+      setEditing(null); await load();
+    } catch (reason) {
+      setModalError(reason instanceof Error ? reason.message : 'Unable to save correction.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (loading) return <div className="page-state"><LoaderCircle className="spin"/><h1>Loading academic calendar</h1><p>Checking operational and historical periods.</p></div>;
   return <>
-    <PageHeader eyebrow="Control · Academic calendar" title="Academic periods" description="Open one working term, preserve closed history, and use the same period throughout the bursar workspace." actions={<button className="btn primary" onClick={() => setOpen(true)}><Plus size={16}/> New academic year</button>} />
+    <PageHeader eyebrow="Control · Academic calendar" title="Academic periods" description="Open one working term, preserve closed history, and use the same period throughout the bursar workspace." actions={<button className="btn primary" onClick={() => {setModalError('');setOpen(true);}}><Plus size={16}/> New academic year</button>} />
     {error && <div className="notice period-error">{error}<button onClick={() => setError('')}><X size={15}/></button></div>}
     <section className="metric-grid period-metrics"><div className="metric-card"><CalendarDays/><span>Configured periods</span><strong>{periods.length}</strong><small>Across {new Set(periods.map(item => item.academic_year_id)).size} academic years</small></div><div className="metric-card"><CheckCircle2/><span>Operational period</span><strong>{operational?.name ?? 'Not opened'}</strong><small>{operational?.academic_year_name ?? 'Open a draft period to begin work'}</small></div><div className="metric-card"><LockKeyhole/><span>Closed history</span><strong>{periods.filter(item => item.status === 'closed').length}</strong><small>Protected against ordinary changes</small></div></section>
-    <section className="panel period-register"><header className="panel-title"><div><span>Calendar register</span><h2>Terms and lifecycle</h2></div></header>{!periods.length ? <div className="empty-register"><CalendarDays/><strong>No academic year yet</strong><span>Create the school calendar before registering term activity.</span></div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>Academic year</th><th>Period</th><th>Dates</th><th>Payment due</th><th>Status</th><th>Activity</th><th>Actions</th></tr></thead><tbody>{periods.map(period => <tr key={period.id}><td><strong>{period.academic_year_name}</strong><small>{period.academic_year}</small></td><td>{period.name}{period.balance_carried_into && <small>Opening balances carried in</small>}</td><td>{period.opening_date} — {period.closing_date}</td><td>{period.due_date}</td><td><span className={`status ${period.status}`}>{period.status}</span></td><td>{period.activity_count} records</td><td><div className="row-actions"><button title="Correct period" onClick={() => setEditing(period)} disabled={period.status === 'closed'}><Edit3 size={15}/></button>{period.status === 'draft' && <button onClick={() => transition(period, 'open')}>Open</button>}{period.status === 'open' && <button onClick={() => transition(period, 'closing')}>Start closing</button>}{period.status === 'closing' && <button onClick={() => transition(period, 'closed')}>Close</button>}{period.status === 'closed' && period.has_close_snapshot && <button onClick={() => reviewCarry(period)}>{period.balance_carried_forward ? 'View carry' : canManageCarry ? 'Carry balances' : 'Review carry'}</button>}{period.status === 'closed' && !period.has_close_snapshot && school?.role === 'owner' && <button onClick={() => transition(period, 'open')}>Reopen</button>}{period.status === 'draft' && <button title="Delete draft" onClick={() => remove(period)}><Trash2 size={15}/></button>}</div></td></tr>)}</tbody></table></div>}</section>
-    {open && <div className="modal-backdrop"><section className="modal registration-modal"><header><div><h2>Create academic year</h2><p>Ugandan schools commonly use three terms. Keep, rename, add, or remove periods to match this school.</p></div><button onClick={() => setOpen(false)}><X size={20}/></button></header><form className="modal-form" onSubmit={createYear}><div className="form-grid"><label>Calendar year<input name="year" type="number" min="2000" max="2100" required /></label><label>Display name<input name="name" placeholder="2027 Academic Year" required /></label><label>Year opens<input name="start_date" type="date" required /></label><label>Year closes<input name="end_date" type="date" required /></label></div><div className="period-builder"><div className="form-section-title"><h3>School periods</h3><button type="button" className="btn compact" onClick={() => setTerms(items => [...items, {name:`Period ${items.length + 1}`,opening_date:'',due_date:'',closing_date:''}])}><Plus size={14}/> Add period</button></div>{terms.map((term, index) => <div className="period-draft" key={index}><strong>{index + 1}</strong><label>Name<input value={term.name} onChange={event => setTerms(items => items.map((item, i) => i === index ? {...item,name:event.target.value} : item))} required /></label><label>Opens<input type="date" value={term.opening_date} onChange={event => setTerms(items => items.map((item, i) => i === index ? {...item,opening_date:event.target.value} : item))} required /></label><label>Payment due<input type="date" value={term.due_date} onChange={event => setTerms(items => items.map((item, i) => i === index ? {...item,due_date:event.target.value} : item))} required /></label><label>Closes<input type="date" value={term.closing_date} onChange={event => setTerms(items => items.map((item, i) => i === index ? {...item,closing_date:event.target.value} : item))} required /></label>{terms.length > 1 && <button type="button" onClick={() => setTerms(items => items.filter((_, i) => i !== index))}><Trash2 size={15}/></button>}</div>)}</div><footer><button type="button" className="btn" onClick={() => setOpen(false)}>Cancel</button><button className="btn primary" disabled={saving}>{saving ? 'Creating…' : 'Create calendar'}</button></footer></form></section></div>}
-    {editing && <div className="modal-backdrop"><section className="modal"><header><div><h2>Correct period</h2><p>Corrections are audited. Closed periods must be reopened first.</p></div><button onClick={() => setEditing(null)}><X size={20}/></button></header><form className="modal-form" onSubmit={correct}><label>Period name<input name="name" defaultValue={editing.name} required /></label><label>Opening date<input name="opening_date" type="date" defaultValue={editing.opening_date} required /></label><label>Payment due date<input name="due_date" type="date" defaultValue={editing.due_date} required /></label><label>Closing date<input name="closing_date" type="date" defaultValue={editing.closing_date} required /></label><footer><button type="button" className="btn" onClick={() => setEditing(null)}>Cancel</button><button className="btn primary" disabled={saving}>Save correction</button></footer></form></section></div>}
+    <section className="panel period-register"><header className="panel-title"><div><span>Calendar register</span><h2>Terms and lifecycle</h2></div></header>{!periods.length ? <div className="empty-register"><CalendarDays/><strong>No academic year yet</strong><span>Create the school calendar before registering term activity.</span></div> : <div className="table-wrap"><table className="data-table"><thead><tr><th>Academic year</th><th>Period</th><th>Dates</th><th>Payment due</th><th>Status</th><th>Activity</th><th>Actions</th></tr></thead><tbody>{periods.map(period => <tr key={period.id}><td><strong>{period.academic_year_name}</strong><small>{period.academic_year}</small></td><td>{period.name}{period.balance_carried_into && <small>Opening balances carried in</small>}</td><td>{period.opening_date} — {period.closing_date}</td><td>{period.due_date}</td><td><span className={`status ${period.status}`}>{period.status}</span></td><td>{period.activity_count} records</td><td><div className="row-actions"><button title="Correct period" onClick={() => {setModalError('');setEditing(period);}} disabled={period.status === 'closed'}><Edit3 size={15}/></button>{period.status === 'draft' && <button onClick={() => transition(period, 'open')}>Open</button>}{period.status === 'open' && <button onClick={() => transition(period, 'closing')}>Start closing</button>}{period.status === 'closing' && <button onClick={() => transition(period, 'closed')}>Close</button>}{period.status === 'closed' && period.has_close_snapshot && <button onClick={() => reviewCarry(period)}>{period.balance_carried_forward ? 'View carry' : canManageCarry ? 'Carry balances' : 'Review carry'}</button>}{period.status === 'closed' && !period.has_close_snapshot && school?.role === 'owner' && <button onClick={() => transition(period, 'open')}>Reopen</button>}{period.status === 'draft' && <button title="Delete draft" onClick={() => remove(period)}><Trash2 size={15}/></button>}</div></td></tr>)}</tbody></table></div>}</section>
+    {open && <div className="modal-backdrop"><section className="modal registration-modal"><header><div><h2>Create academic year</h2><p>Ugandan schools commonly use three terms. Keep, rename, add, or remove periods to match this school.</p></div><button onClick={() => setOpen(false)}><X size={20}/></button></header><form className="modal-form" onSubmit={createYear}>{modalError&&<div className="form-error" role="alert">{modalError}</div>}<div className="form-grid"><label>Calendar year<input name="year" type="number" min="2000" max="2100" required /></label><label>Display name<input name="name" placeholder="2027 Academic Year" required /></label><label>Year opens<input name="start_date" type="date" required /></label><label>Year closes<input name="end_date" type="date" required /></label></div><div className="period-builder"><div className="form-section-title"><h3>School periods</h3><button type="button" className="btn compact" onClick={() => setTerms(items => [...items, {name:`Period ${items.length + 1}`,opening_date:'',due_date:'',closing_date:''}])}><Plus size={14}/> Add period</button></div>{terms.map((term, index) => <div className="period-draft" key={index}><strong>{index + 1}</strong><label>Name<input value={term.name} onChange={event => setTerms(items => items.map((item, i) => i === index ? {...item,name:event.target.value} : item))} required /></label><label>Opens<input type="date" value={term.opening_date} onChange={event => setTerms(items => items.map((item, i) => i === index ? {...item,opening_date:event.target.value} : item))} required /></label><label>Payment due<input type="date" value={term.due_date} onChange={event => setTerms(items => items.map((item, i) => i === index ? {...item,due_date:event.target.value} : item))} required /></label><label>Closes<input type="date" value={term.closing_date} onChange={event => setTerms(items => items.map((item, i) => i === index ? {...item,closing_date:event.target.value} : item))} required /></label>{terms.length > 1 && <button type="button" onClick={() => setTerms(items => items.filter((_, i) => i !== index))}><Trash2 size={15}/></button>}</div>)}</div><footer><button type="button" className="btn" onClick={() => setOpen(false)}>Cancel</button><button className="btn primary" disabled={saving}>{saving ? 'Creating…' : 'Create calendar'}</button></footer></form></section></div>}
+    {editing && <div className="modal-backdrop"><section className="modal"><header><div><h2>Correct period</h2><p>Corrections are audited. Closed periods must be reopened first.</p></div><button onClick={() => setEditing(null)}><X size={20}/></button></header><form className="modal-form" onSubmit={correct}>{modalError&&<div className="form-error" role="alert">{modalError}</div>}<label>Period name<input name="name" defaultValue={editing.name} required /></label><label>Opening date<input name="opening_date" type="date" defaultValue={editing.opening_date} required /></label><label>Payment due date<input name="due_date" type="date" defaultValue={editing.due_date} required /></label><label>Closing date<input name="closing_date" type="date" defaultValue={editing.closing_date} required /></label><footer><button type="button" className="btn" onClick={() => setEditing(null)}>Cancel</button><button className="btn primary" disabled={saving}>Save correction</button></footer></form></section></div>}
     {periods.some(period => period.has_close_snapshot) && <section className="panel close-archive"><header className="panel-title"><div><span>Immutable evidence</span><h2>Closing summaries</h2></div></header><div className="close-archive-list">{periods.filter(period => period.has_close_snapshot).map(period => <button key={period.id} onClick={() => viewCloseSummary(period)}><ShieldCheck/><span><strong>{period.name}</strong><small>{period.academic_year_name} · View frozen financial totals</small></span><ArrowUpRight size={15}/></button>)}</div></section>}
     {closingPeriod && <div className="modal-backdrop"><section className="modal close-review-modal">
       <header><div><h2>Pre-close controls</h2><p>{closingPeriod.name} can close only after every financial blocker is resolved.</p></div><button aria-label="Close checklist" onClick={() => {setClosingPeriod(null);setReadiness(null);}}><X size={20}/></button></header>

@@ -11,6 +11,10 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Keep an active development server isolated from production builds. Next.js
+  // otherwise writes both commands into `.next`, which can remove development
+  // manifests while a bursar is using the local workspace.
+  distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
   poweredByHeader: false,
   async headers() {
     return [{ source: '/(.*)', headers: securityHeaders }];

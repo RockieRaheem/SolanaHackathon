@@ -19,15 +19,21 @@ pnpm.cmd test:e2e
 
 The system-channel fallback retains traces and screenshots but disables video because the pinned Playwright FFmpeg helper may not be installed. CI should use the pinned Playwright Chromium runtime for reproducibility and full video evidence.
 
-Authenticated read-only checks use a dedicated bursar account in a non-production Supabase project:
+Authenticated read-only checks require dedicated owner, bursar, cashier and auditor accounts in the same non-production school. The suite signs in through the real UI and rejects any account whose server-derived role does not match the expected role:
 
 ```powershell
+$env:E2E_OWNER_EMAIL='e2e-owner@example.test'
+$env:E2E_OWNER_PASSWORD='use-a-secret-store'
 $env:E2E_BURSAR_EMAIL='e2e-bursar@example.test'
 $env:E2E_BURSAR_PASSWORD='use-a-secret-store'
+$env:E2E_CASHIER_EMAIL='e2e-cashier@example.test'
+$env:E2E_CASHIER_PASSWORD='use-a-secret-store'
+$env:E2E_AUDITOR_EMAIL='e2e-auditor@example.test'
+$env:E2E_AUDITOR_PASSWORD='use-a-secret-store'
 pnpm.cmd test:e2e:auth
 ```
 
-Never commit credentials. CI must supply them from its secret store.
+Never commit credentials. CI must supply them from its secret store. Every account must belong to the isolated E2E school and have exactly the named membership role; do not reuse personal, demonstration or production accounts.
 
 ## Mutation safety gate
 

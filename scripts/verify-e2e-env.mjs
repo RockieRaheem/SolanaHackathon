@@ -1,8 +1,15 @@
 const mode = process.argv[2];
 const missing = [];
 
-if (!process.env.E2E_BURSAR_EMAIL?.trim()) missing.push('E2E_BURSAR_EMAIL');
-if (!process.env.E2E_BURSAR_PASSWORD?.trim()) missing.push('E2E_BURSAR_PASSWORD');
+const roles = ['OWNER', 'BURSAR', 'CASHIER', 'AUDITOR'];
+
+for (const role of roles) {
+  const emailName = `E2E_${role}_EMAIL`;
+  const passwordName = `E2E_${role}_PASSWORD`;
+
+  if (!process.env[emailName]?.trim()) missing.push(emailName);
+  if (!process.env[passwordName]?.trim()) missing.push(passwordName);
+}
 
 if (mode === 'mutations') {
   if (process.env.E2E_ALLOW_MUTATIONS !== 'true') missing.push('E2E_ALLOW_MUTATIONS=true');

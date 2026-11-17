@@ -70,6 +70,17 @@ class StudentSummary(BaseModel):
     guardian_phone: str
 
 
+class StudentRegistrationResult(StudentSummary):
+    general_fee_status: str
+    general_fee_name: str | None = None
+    general_fee_amount: Decimal | None = None
+    general_fee_message: str | None = None
+    requirement_status: str
+    requirements_assigned: int = 0
+    requirement_charge_total: Decimal = Decimal("0")
+    requirement_names: list[str] = Field(default_factory=list)
+
+
 class StudentList(BaseModel):
     items: list[StudentSummary]
     total: int

@@ -497,6 +497,88 @@ def test_duplicate_learner_number_returns_conflict(billing_workspace) -> None:
         assert session.scalar(select(func.count(LearnerIdentity.id))) == 1
 
 
+def test_published_requirement_is_reported_and_posted_for_new_learner(
+    billing_workspace,
+) -> None:
+    engine, _user_id, ids, client = billing_workspace
+    requirement = client.post(
+        "/api/v1/requirements",
+        json={
+            "school_id": str(ids["school"]),
+            "period_id": str(ids["period"]),
+            "name": "Primary Seven ream",
+            "code": "P7-REAM-AUTO",
+            "requirement_type": "school_item",
+            "academic_year": 2027,
+            "term": 1,
+            "amount": 15_000,
+            "quantity": 1,
+            "unit": "ream",
+            "is_mandatory": True,
+            "class_ids": [str(ids["primary"])],
+        },
+    )
+    assert requirement.status_code == 201, requirement.text
+    query = f"school_id={ids['school']}&period_id={ids['period']}"
+    preview = client.get(f"/api/v1/billing/preview?{query}").json()
+    published = client.post(
+        "/api/v1/billing/publish",
+        json={
+            "school_id": str(ids["school"]),
+            "period_id": str(ids["period"]),
+            "preview_token": preview["preview_token"],
+            "idempotency_key": "publish-primary-requirement",
+        },
+    )
+    assert published.status_code == 201, published.text
+
+    registration = client.post(
+        "/api/v1/students",
+        json={
+            "school_id": str(ids["school"]),
+            "period_id": str(ids["period"]),
+            "first_name": "Requirement",
+            "last_name": "Learner",
+            "gender": "female",
+            "class_id": str(ids["primary"]),
+            "stream_id": str(ids["east"]),
+            "academic_year": 2027,
+            "term": 1,
+            "boarding_status": "day",
+            "nationality": "Ugandan",
+            "guardians": [
+                {
+                    "first_name": "Primary",
+                    "last_name": "Guardian",
+                    "relationship": "guardian",
+                    "phone": "+256700000002",
+                    "is_primary": True,
+                }
+            ],
+        },
+    )
+    assert registration.status_code == 201, registration.text
+    result = registration.json()
+    assert result["general_fee_status"] == "not_configured"
+    assert result["requirement_status"] == "assigned"
+    assert result["requirements_assigned"] == 1
+    assert result["requirement_names"] == ["Primary Seven ream"]
+    assert Decimal(str(result["requirement_charge_total"])) == Decimal("15000.00")
+
+    student_id = uuid.UUID(result["id"])
+    with Session(engine) as session:
+        assignment = session.scalar(
+            select(StudentRequirement).where(StudentRequirement.student_id == student_id)
+        )
+        assert assignment is not None
+        entry = session.scalar(
+            select(LedgerEntry).where(LedgerEntry.student_id == student_id)
+        )
+        assert entry is not None
+        assert entry.entry_type == "requirement_charge"
+        assert entry.amount == Decimal("15000.00")
+
+
 def test_published_general_fee_follows_new_placement_and_scholarship_is_bounded(
     billing_workspace,
 ) -> None:
@@ -587,7 +669,16 @@ def test_published_general_fee_follows_new_placement_and_scholarship_is_bounded(
         },
     )
     assert registration.status_code == 201, registration.text
-    student_id = uuid.UUID(registration.json()["id"])
+    registration_result = registration.json()
+    assert registration_result["general_fee_status"] == "assigned"
+    assert registration_result["general_fee_name"] == "Primary Seven general fee"
+    assert Decimal(str(registration_result["general_fee_amount"])) == Decimal("100000.00")
+    assert registration_result["general_fee_message"] is None
+    assert registration_result["requirement_status"] == "not_configured"
+    assert registration_result["requirements_assigned"] == 0
+    assert Decimal(str(registration_result["requirement_charge_total"])) == Decimal("0")
+    assert registration_result["requirement_names"] == []
+    student_id = uuid.UUID(registration_result["id"])
 
     with Session(engine) as session:
         assignment = session.scalar(

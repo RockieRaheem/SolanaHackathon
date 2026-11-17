@@ -56,6 +56,7 @@ from harambeeone_api.schemas import (
     StudentCreate,
     StudentList,
     StudentProfileUpdate,
+    StudentRegistrationResult,
     StudentStatusUpdate,
     StudentSummary,
     StudentTransfer,
@@ -1056,12 +1057,14 @@ def _register_student(payload: StudentCreate, session: Session) -> StudentSummar
     )
 
 
-@router.post("/students", response_model=StudentSummary, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/students", response_model=StudentRegistrationResult, status_code=status.HTTP_201_CREATED
+)
 def register_student(
     payload: StudentCreate,
     session: Session = Depends(get_session),
     context: SchoolContext = Depends(require_permission("students:write")),
-) -> StudentSummary:
+) -> StudentRegistrationResult:
     context.assert_school(payload.school_id)
     learner_number = (
         payload.learner_identification_number.strip()
@@ -1123,7 +1126,22 @@ def register_student(
         )
     )
     session.commit()
-    return result
+    fee_result = fee_assignment or {"status": "not_applicable"}
+    requirement_result = requirement_assignment or {
+        "status": "not_applicable",
+        "assigned_count": 0,
+    }
+    return StudentRegistrationResult(
+        **result.model_dump(),
+        general_fee_status=fee_result["status"],
+        general_fee_name=fee_result.get("plan_name"),
+        general_fee_amount=fee_result.get("amount"),
+        general_fee_message=fee_result.get("message"),
+        requirement_status=requirement_result["status"],
+        requirements_assigned=requirement_result.get("assigned_count", 0),
+        requirement_charge_total=requirement_result.get("charge_total", "0"),
+        requirement_names=requirement_result.get("requirement_names", []),
+    )
 
 
 @router.post("/student-imports")

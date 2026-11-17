@@ -262,6 +262,12 @@ def test_search_channels_split_payment_and_retry_are_consistent(payment_workspac
     retried = client.post("/api/v1/payments", json=payment_payload(ids))
     assert retried.status_code == 201, retried.text
     assert retried.json()["id"] == body["id"]
+    conflicting_retry = payment_payload(ids)
+    conflicting_retry["allocations"][0]["amount"] = 175_000
+    conflicting_retry["allocations"][1]["amount"] = 50_000
+    conflict = client.post("/api/v1/payments", json=conflicting_retry)
+    assert conflict.status_code == 409
+    assert "different payment details" in conflict.json()["detail"]
     with Session(engine) as session:
         assert session.scalar(select(func.count(Payment.id))) == 1
         assert session.scalar(select(func.count(PaymentAllocation.id))) == 3

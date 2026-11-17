@@ -1540,15 +1540,45 @@ def record_payment(
         existing_student_id = session.scalar(
             select(PaymentAllocation.student_id).where(PaymentAllocation.payment_id == existing.id)
         )
-        if (
+        same_receipt = (
             existing.transaction_type == "receipt"
             and existing_student_id == student.id
+            and existing.period_id == period.id
             and existing.amount == payload.amount
             and existing.channel == payload.channel
-        ):
+            and existing.payer_name
+            == (payload.payer_name.strip() if payload.payer_name else None)
+            and existing.note == (payload.note.strip() if payload.note else None)
+        )
+        same_allocations = True
+        if payload.allocations:
+            persisted_allocations = session.scalars(
+                select(PaymentAllocation).where(PaymentAllocation.payment_id == existing.id)
+            ).all()
+            persisted_split = sorted(
+                (
+                    item.allocation_type,
+                    str(item.requirement_assignment_id or ""),
+                    item.amount,
+                )
+                for item in persisted_allocations
+            )
+            requested_split = sorted(
+                (
+                    item.allocation_type,
+                    str(item.requirement_assignment_id or ""),
+                    item.amount,
+                )
+                for item in payload.allocations
+            )
+            same_allocations = persisted_split == requested_split
+        if same_receipt and same_allocations:
             return _payment_summary(session, existing)
         raise HTTPException(
-            status_code=409, detail="This payment reference has already been recorded"
+            status_code=409,
+            detail=(
+                "This payment reference has already been recorded with different payment details"
+            ),
         )
     allocations = _resolved_allocations(
         session, payload=payload, period_id=period.id, student=student

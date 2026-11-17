@@ -1,6 +1,39 @@
 import type { NextConfig } from 'next';
 
+function origin(value: string | undefined) {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+const supabaseOrigin = origin(process.env.NEXT_PUBLIC_SUPABASE_URL);
+const solanaOrigin = origin(
+  process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.devnet.solana.com',
+);
+const connectSources = ["'self'", supabaseOrigin, solanaOrigin]
+  .filter((value): value is string => Boolean(value));
+if (supabaseOrigin?.startsWith('https://')) {
+  connectSources.push(supabaseOrigin.replace('https://', 'wss://'));
+}
+
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  `connect-src ${Array.from(new Set(connectSources)).join(' ')}`,
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 const securityHeaders = [
+  { key: 'Content-Security-Policy', value: contentSecurityPolicy },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

@@ -449,10 +449,56 @@ Only after the bursar completion gate:
 4. Settlement-provider and fiat-delivery reconciliation.
 5. Independent security and corridor validation before any mainnet activity.
 
+## Production-readiness programme
+
+The user explicitly authorized production hardening on 2026-11-17 after the bursar completion gate. This programme does not label HarambeeOne production-ready merely because the application builds. Each phase must retain its own evidence, and external requirements must remain visibly blocked until the responsible provider or reviewer supplies proof.
+
+### Phase P1 - Browser journey verification — **IN PROGRESS**
+
+- Add Playwright without an authentication bypass. Authenticated tests sign in through the real Supabase password flow using dedicated E2E accounts.
+- Keep public and read-only smoke checks safe to run locally. Mutating financial journeys require `E2E_ALLOW_MUTATIONS=true`, a dedicated non-production Supabase project and database, and an explicit E2E school marker.
+- Cover public-route protection, login failure, owner, bursar, cashier and auditor boundaries, learner registration, billing publication, payment and receipt, reconciliation and cash-up, arrears follow-up, reports, period close, carry-forward and rollover.
+- Cover guardian request, owner publication, donor checkout and Solana confirmation separately; devnet remains mandatory for automated chain tests.
+- CI must retain traces, screenshots and videos for failed journeys and must fail when required role credentials are absent.
+
+Completion gate:
+
+- Public security smoke tests and the authenticated read-only role matrix pass in Chromium.
+- The complete mutating bursar journey passes against an isolated resettable E2E environment without touching shared or production data.
+- Failure artifacts are retained and the commands, environment contract and reset procedure are documented.
+
+### Phase P2 - Performance and capacity evidence — **NOT STARTED**
+
+- Establish API latency, query-count, connection-pool and browser-load budgets using representative school volumes.
+- Add repeatable load tests, slow-query evidence and indexes or query changes justified by measured bottlenecks.
+
+### Phase P3 - Production security and privacy controls — **NOT STARTED**
+
+- Enforce privileged-user MFA and inactivity policy through the selected production identity configuration.
+- Add CAPTCHA, production SMTP, managed secrets, dependency and container scanning, privacy retention controls and independent security-review evidence.
+
+### Phase P4 - Reliability, observability and recovery — **NOT STARTED**
+
+- Add structured request correlation, error and latency monitoring, dependency health alerts and auditable operational dashboards.
+- Automate encrypted backups and prove restoration, incident response and deployment rollback in a staging exercise.
+
+### Phase P5 - Regulated payments and release readiness — **BLOCKED EXTERNALLY**
+
+- Integrate only contracted, licensed Ugandan payment providers with signed webhook verification and settlement reconciliation.
+- Complete Ugandan payments, safeguarding and privacy legal review before processing real funds or publishing real learner cases.
+- Solana mainnet requires treasury governance, production RPC, live signed pricing, secure key management, a regulated fiat corridor and independent review. Devnet functionality is not mainnet approval.
+
+Production release gate:
+
+- Phases P1-P4 are complete with current evidence.
+- Phase P5 provider, legal and security evidence is approved by named responsible parties.
+- A release owner signs a go-live checklist covering data migration, backup restore, monitoring, support, incident response and rollback.
+
 ## Progress log
 
 Add a dated entry only when a slice changes status. Include the verification commands or evidence used to justify completion.
 
+- 2026-11-17: Started production-readiness Phase P1. Added a Playwright Chromium gate with normal Supabase authentication, retained failure artifacts, public security-boundary coverage, authenticated read-only scaffolding, and a hard environment refusal for mutating financial journeys. Added an environment-aware CSP while preserving the configured Supabase and Solana RPC connections. All four safe browser security tests, web lint, TypeScript validation and the optimized 53-route build pass. Phase P1 remains in progress until dedicated role accounts and a resettable isolated mutation environment execute the complete browser journeys.
 - 2026-11-07: Completed the verified Solana donation refinement after the bursar gate. SomaFund now creates exact expiring checkouts, signs atomic transfer-plus-memo transactions, verifies confirmed/finalized signer, recipient, lamports, memo and timing through server-side RPC, blocks signature replay and manual bypass, and atomically issues the school receipt and learner-ledger credit with immutable chain evidence. Focused Ruff checks and all 18 support workflow tests plus 6 direct Solana RPC evidence tests passed; the Solana UI compiled and type-checked; live Supabase reached Alembic head `c7e5a1d9f204` and `verify_solana_donations.py` passed RLS, revoked grants, signature uniqueness and immutability controls.
 
 

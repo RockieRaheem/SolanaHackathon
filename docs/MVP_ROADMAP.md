@@ -453,6 +453,19 @@ Only after the bursar completion gate:
 
 The user explicitly authorized production hardening on 2026-11-17 after the bursar completion gate. This programme does not label HarambeeOne production-ready merely because the application builds. Each phase must retain its own evidence, and external requirements must remain visibly blocked until the responsible provider or reviewer supplies proof.
 
+### Database production hardening override — **IN PROGRESS**
+
+The user explicitly prioritized database production readiness on 2026-11-17. Runtime and migration connections must use bounded waits and encrypted transport; production must verify the database certificate. The live schema must remain at migration head with tenant RLS, revoked browser-facing grants, immutable financial evidence, retry constraints, audit actors, tenant consistency and exact financial equations. Go-live additionally requires provider-side SSL enforcement, network restrictions, monitored capacity, PITR or approved backup retention, and a successful restore exercise into a separate project.
+
+Completion gate:
+
+- `pnpm db:verify-production` passes with `NODE_ENV=production`, `DATABASE_SSL_MODE=verify-full`, and the trusted Supabase CA certificate.
+- The production Supabase project has SSL Enforcement and Network Restrictions enabled with evidence retained by the release owner.
+- Connection budgets are calculated across every API replica and validated under representative load without pool exhaustion or unacceptable latency.
+- PITR or approved backup retention is enabled, monitored, and a timed restore into a separate project proves the agreed recovery-point and recovery-time objectives.
+- Production secrets are stored in a managed secret store, database credentials are rotated, and development or E2E credentials cannot reach production.
+- An independent security review finds no unresolved critical or high-severity database issue.
+
 ### Phase P1 - Browser journey verification — **IN PROGRESS**
 
 - Add Playwright without an authentication bypass. Authenticated tests sign in through the real Supabase password flow using dedicated E2E accounts.
@@ -500,6 +513,7 @@ Add a dated entry only when a slice changes status. Include the verification com
 
 - 2026-11-17: Started production-readiness Phase P1. Added a Playwright Chromium gate with normal Supabase authentication, retained failure artifacts, public security-boundary coverage, authenticated read-only scaffolding, and a hard environment refusal for mutating financial journeys. Added an environment-aware CSP while preserving the configured Supabase and Solana RPC connections. All four safe browser security tests, web lint, TypeScript validation and the optimized 53-route build pass. Phase P1 remains in progress until dedicated role accounts and a resettable isolated mutation environment execute the complete browser journeys.
 - 2026-11-17: Strengthened Phase P1 authentication coverage. The browser gate now requires dedicated owner, bursar, cashier and auditor accounts, authenticates through the normal UI, and verifies each server-derived membership role through `/api/current-school` before exercising the workspace. Playwright discovers all nine tests, the missing-secret check fails closed, and web lint plus TypeScript validation pass. Execution still requires isolated non-production accounts supplied through local or CI secrets.
+- 2026-11-17: Started the database production hardening override. Runtime and migration connections now share explicit TLS policy, production fails closed without `verify-full` and a readable CA certificate, application pools and waits are configurable and bounded, stale connections are preflighted, database statements and idle transactions time out, and failed request sessions explicitly roll back. All 132 backend tests and Ruff pass; the live database is at Alembic head `f2b71a6c9d40`, and the consolidated schema/tenant/financial verifier passes. The runtime verifier correctly blocks release because provider-side SSL Enforcement is not yet enabled; backup restore, network restriction, capacity and independent-review evidence also remain outstanding.
 - 2026-11-07: Completed the verified Solana donation refinement after the bursar gate. SomaFund now creates exact expiring checkouts, signs atomic transfer-plus-memo transactions, verifies confirmed/finalized signer, recipient, lamports, memo and timing through server-side RPC, blocks signature replay and manual bypass, and atomically issues the school receipt and learner-ledger credit with immutable chain evidence. Focused Ruff checks and all 18 support workflow tests plus 6 direct Solana RPC evidence tests passed; the Solana UI compiled and type-checked; live Supabase reached Alembic head `c7e5a1d9f204` and `verify_solana_donations.py` passed RLS, revoked grants, signature uniqueness and immutability controls.
 
 

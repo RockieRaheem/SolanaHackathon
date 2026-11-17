@@ -11,6 +11,7 @@
     "db:revision": "pnpm --filter @harambeeone/backend db:revision",
     "db:migrate": "pnpm --filter @harambeeone/backend db:migrate",
     "db:seed": "pnpm --filter @harambeeone/backend db:seed",
+    "db:verify-production": "pnpm --filter @harambeeone/backend db:verify-production",
     "test:e2e": "playwright test e2e/public-security.spec.ts",
     "test:e2e:auth": "node scripts/verify-e2e-env.mjs auth && playwright test e2e/authenticated-readonly.spec.ts",
     "test:e2e:mutating": "node scripts/verify-e2e-env.mjs mutations && playwright test e2e/mutating"

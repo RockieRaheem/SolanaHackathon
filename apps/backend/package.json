@@ -8,6 +8,7 @@
     "build": "uv --cache-dir .cache/uv run --no-sync python -m compileall -q src",
     "db:revision": "uv --cache-dir .cache/uv run --no-sync python -m alembic revision --autogenerate",
     "db:migrate": "uv --cache-dir .cache/uv run --no-sync python -m alembic upgrade head",
-    "db:seed": "uv --cache-dir .cache/uv run --no-sync python scripts/seed_academic_structure.py"
+    "db:seed": "uv --cache-dir .cache/uv run --no-sync python scripts/seed_academic_structure.py",
+    "db:verify-production": "uv --cache-dir .cache/uv run --no-sync python scripts/verify_database_runtime.py && uv --cache-dir .cache/uv run --no-sync python scripts/verify_bursar_completion.py && uv --cache-dir .cache/uv run --no-sync python -m alembic current"
   }
 }

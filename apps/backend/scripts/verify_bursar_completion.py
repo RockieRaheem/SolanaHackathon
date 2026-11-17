@@ -4,7 +4,7 @@ from sqlalchemy import text
 
 from harambeeone_api.database import get_engine
 
-EXPECTED_HEAD = "b6f4d9a2c810"
+EXPECTED_HEAD = "f2b71a6c9d40"
 TENANT_TABLES = (
     "academic_years",
     "academic_periods",
@@ -39,6 +39,7 @@ TENANT_TABLES = (
     "period_reopenings",
     "period_reopening_corrections",
     "period_reopening_learners",
+    "solana_donation_intents",
     "audit_events",
 )
 RETRY_CONSTRAINTS = {
@@ -49,6 +50,11 @@ RETRY_CONSTRAINTS = {
     "uq_balance_carry_key",
     "uq_learner_rollovers_key",
     "uq_period_reopenings_key",
+}
+SOLANA_REPLAY_CONSTRAINTS = {
+    "uq_solana_intents_pledge_id",
+    "uq_solana_intents_memo",
+    "uq_solana_intents_transaction_signature",
 }
 IMMUTABILITY_TRIGGERS = {
     "ledger_entries_immutable",
@@ -63,6 +69,7 @@ IMMUTABILITY_TRIGGERS = {
     "protect_period_reopenings",
     "protect_period_reopening_corrections",
     "protect_period_reopening_learners",
+    "solana_intents_immutable",
 }
 
 
@@ -101,6 +108,12 @@ def main() -> None:
             connection.scalars(
                 text("select conname from pg_constraint where conname = any(:names)"),
                 {"names": list(RETRY_CONSTRAINTS)},
+            )
+        )
+        solana_constraints = set(
+            connection.scalars(
+                text("select conname from pg_constraint where conname = any(:names)"),
+                {"names": list(SOLANA_REPLAY_CONSTRAINTS)},
             )
         )
         triggers = set(
@@ -199,12 +212,44 @@ def main() -> None:
                or carry.net_balance <> totals.net
             """,
         )
+        missing_settlement_anchors = _scalar(
+            connection,
+            """
+            select count(*) from payments payment
+            left join settlement_anchors anchor on anchor.payment_id = payment.id
+            where anchor.id is null
+            """,
+        )
+        invalid_solana_evidence = _scalar(
+            connection,
+            """
+            select count(*) from solana_donation_intents intent
+            join support_pledges pledge on pledge.id = intent.pledge_id
+            join support_payment_destinations destination
+              on destination.id = pledge.payment_destination_id
+            where destination.channel <> 'solana'
+               or intent.recipient_address <> destination.account_reference
+               or (
+                 intent.status = 'confirmed'
+                 and (
+                   intent.sender_address is null
+                   or intent.transaction_signature is null
+                   or intent.confirmation_slot is null
+                   or intent.transaction_block_time is null
+                   or intent.confirmed_at is null
+                 )
+               )
+            """,
+        )
 
     assert revision == EXPECTED_HEAD, f"Unexpected migration head: {revision}"
     assert rls_tables == set(TENANT_TABLES), f"RLS missing from {set(TENANT_TABLES)-rls_tables}"
     assert exposed_grants == 0, "Operational bursar tables are exposed through the Data API"
     assert constraints == RETRY_CONSTRAINTS, (
         f"Missing retry constraints: {RETRY_CONSTRAINTS-constraints}"
+    )
+    assert solana_constraints == SOLANA_REPLAY_CONSTRAINTS, (
+        f"Missing Solana replay constraints: {SOLANA_REPLAY_CONSTRAINTS-solana_constraints}"
     )
     assert triggers == IMMUTABILITY_TRIGGERS, (
         f"Missing immutable evidence triggers: {IMMUTABILITY_TRIGGERS-triggers}"
@@ -214,9 +259,12 @@ def main() -> None:
     assert tenant_mismatches == 0, "Cross-school operational evidence exists"
     assert missing_audit_actors == 0, "Consequential audit evidence is missing its actor"
     assert invalid_carries == 0, "A carry-forward batch does not equal its immutable lines"
+    assert missing_settlement_anchors == 0, "A payment is missing settlement evidence"
+    assert invalid_solana_evidence == 0, "Solana checkout evidence is incomplete or mismatched"
     print(
         "Bursar completion verified: migration head, tenant isolation, retry safety, "
-        "immutable evidence, financial equations, audit actors and carry totals passed"
+        "immutable evidence, financial equations, audit actors, carry totals, payment anchors "
+        "and Solana replay controls passed"
     )
 
 

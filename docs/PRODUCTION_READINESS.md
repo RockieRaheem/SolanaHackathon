@@ -30,6 +30,8 @@ $env:E2E_CASHIER_EMAIL='e2e-cashier@example.test'
 $env:E2E_CASHIER_PASSWORD='use-a-secret-store'
 $env:E2E_AUDITOR_EMAIL='e2e-auditor@example.test'
 $env:E2E_AUDITOR_PASSWORD='use-a-secret-store'
+$env:E2E_SCHOOL_ID='00000000-0000-4000-8000-000000000001'
+$env:E2E_SCHOOL_MARKER='E2E-HARAMBEEONE'
 pnpm.cmd test:e2e:auth
 ```
 
@@ -42,11 +44,12 @@ Financial browser journeys are deliberately refused unless every safety marker i
 ```powershell
 $env:E2E_ALLOW_MUTATIONS='true'
 $env:E2E_ISOLATED_ENVIRONMENT='true'
+$env:E2E_SCHOOL_ID='00000000-0000-4000-8000-000000000001'
 $env:E2E_SCHOOL_MARKER='E2E-HARAMBEEONE'
 pnpm.cmd test:e2e:mutating
 ```
 
-The target must be a dedicated resettable database and Supabase project containing no real learner, guardian, donor or financial data. A future reset command must validate the same school marker before deleting test records. Do not point mutation tests at local development data shared with demonstrations, staging used by people, or production.
+The target must be a dedicated resettable database and Supabase project containing no real learner, guardian, donor or financial data. Before any mutation, the browser suite resolves the signed-in server context and requires both the exact configured school UUID and the `E2E-` school-name marker. A future reset command must validate the same pair before deleting test records. Do not point mutation tests at local development data shared with demonstrations, staging used by people, or production.
 
 Playwright keeps traces, screenshots and video for failed tests in ignored local artifact directories. CI should upload `playwright-report/` and `test-results/` on failure.
 

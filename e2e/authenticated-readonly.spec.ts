@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { signIn } from './helpers/auth';
+import { assertIsolatedSchool } from './helpers/isolation';
 
 const accounts = [
   {
@@ -28,9 +29,18 @@ for (const account of accounts) {
   test(`${account.role} session resolves to its server-authorized school role`, async ({ page }) => {
     await signIn(page, account.email, account.password);
 
-    const contextResponse = await page.request.get('/api/current-school');
-    expect(contextResponse.status()).toBe(200);
-    expect(await contextResponse.json()).toMatchObject({ role: account.role });
+    const school = await assertIsolatedSchool(page, account.role);
+
+    const canReadControls = account.role !== 'cashier';
+    const auditResponse = await page.request.get(
+      `/api/backend/api/v1/audit-events?school_id=${school.id}&limit=1`,
+    );
+    expect(auditResponse.status()).toBe(canReadControls ? 200 : 403);
+
+    const reportsResponse = await page.request.get(
+      `/api/backend/api/v1/reports/centre?school_id=${school.id}`,
+    );
+    expect(reportsResponse.status()).toBe(canReadControls ? 200 : 403);
 
     await page.goto('/dashboard');
     await expect(page).toHaveURL(/\/dashboard(?:\?|$)/);
@@ -43,6 +53,7 @@ test('dedicated bursar account can read the core financial workspaces', async ({
   const bursar = accounts.find((account) => account.role === 'bursar');
   expect(bursar).toBeDefined();
   await signIn(page, bursar!.email, bursar!.password);
+  await assertIsolatedSchool(page, 'bursar');
 
   const workspaces = [
     ['/students', 'Student registry'],
